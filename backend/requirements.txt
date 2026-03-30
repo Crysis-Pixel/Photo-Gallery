@@ -1,0 +1,15 @@
+fastapi==0.104.1
+uvicorn==0.24.0
+sqlalchemy==2.0.23
+torch==2.1.2
+torchvision==0.16.2
+numpy<2
+protobuf<4
+onnxruntime
+pillow==10.1.0
+mediapipe==0.10.5
+APScheduler==3.11.2
+transformers==4.35.2
+openai-clip==1.0.1
+facenet-pytorch
+

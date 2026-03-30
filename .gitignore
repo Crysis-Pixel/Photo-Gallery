@@ -1,0 +1,55 @@
+# Root-level
+node_modules/
+.env
+.DS_Store
+*.log
+
+# Client-specific
+/client/node_modules/
+/client/dist/
+/client/.env
+/client/.DS_Store
+
+# Server-specific
+/server/node_modules/
+/server/.env
+/server/.DS_Store
+
+# Ignore build & deployment folders
+build/
+.vercel/
+.netlify/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+/pycache__/
+*.pyc
+__pycache__/
+*.pyo
+Barcode Cafe
+Photos
+Photos 2
+venv

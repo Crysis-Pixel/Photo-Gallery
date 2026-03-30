@@ -1,0 +1,251 @@
+.gallery-container {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+}
+
+.folder-controls {
+  margin-bottom: 1.75rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.folder-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  color: #333;
+}
+
+.folder-expand-toggle {
+  border: none;
+  background: transparent;
+  color: #667eea;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.folder-current-path {
+  color: #333;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.folder-list {
+  border: 1px solid #e0e0e0;
+  background: #fafafa;
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.folder-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.folder-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.65rem 0.75rem;
+  background: white;
+  border-radius: 8px;
+  border: 1px solid #e8eaf6;
+  word-break: break-all;
+}
+
+.remove-folder-btn {
+  border: none;
+  background: #fdecea;
+  color: #d32f2f;
+  font-weight: 700;
+  padding: 0.35rem 0.65rem;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.remove-folder-btn:hover {
+  background: #f9d6d5;
+}
+
+.folder-empty {
+  color: #666;
+  font-size: 0.95rem;
+}
+
+.folder-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: center;
+}
+
+.folder-input-row {
+  display: flex;
+  gap: 0.75rem;
+  flex: 1;
+  min-width: 260px;
+}
+
+.folder-input-row input {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid #dfe3ee;
+  font-size: 0.95rem;
+}
+
+.folder-input-row input:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.12);
+}
+
+.folder-picker-button,
+.rescan-button {
+  background-color: #667eea;
+  color: white;
+  padding: 0.7rem 1rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.folder-picker-button:hover,
+.rescan-button:hover {
+  background-color: #5667d8;
+}
+
+.folder-picker-button:disabled,
+.rescan-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.folder-note {
+  color: #555;
+  font-size: 0.95rem;
+}
+
+.filters {
+  display: flex;
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+
+.filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filter-group label {
+  font-weight: 600;
+  color: #333;
+  font-size: 0.95rem;
+}
+
+.filter-group select {
+  padding: 0.6em 1em;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: #333;
+  background-color: white;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  min-width: 180px;
+}
+
+.filter-group select:hover {
+  border-color: #667eea;
+}
+
+.filter-group select:focus {
+  outline: none;
+  border-color: #667eea;
+  box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+}
+
+.refresh-btn {
+  background-color: #667eea;
+  padding: 0.6em 1.5em;
+  transition: all 0.25s ease;
+}
+
+.refresh-btn:hover {
+  background-color: #764ba2;
+  transform: translateY(-2px);
+}
+
+.photo-count {
+  font-size: 0.95rem;
+  color: #666;
+  margin-bottom: 1.5rem;
+  font-weight: 500;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1.5rem;
+}
+
+@media (min-width: 768px) {
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+}
+
+.loading {
+  text-align: center;
+  padding: 3rem;
+  font-size: 1.1rem;
+  color: #667eea;
+  font-weight: 500;
+}
+
+.no-photos {
+  text-align: center;
+  padding: 3rem;
+  font-size: 1.1rem;
+  color: #999;
+  grid-column: 1 / -1;
+}
+
+.error-message {
+  background-color: #fee;
+  border: 2px solid #f99;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  color: #c33;
+}
+
+.error-message p {
+  margin: 0.5rem 0;
+}
+
+.error-message button {
+  margin-top: 1rem;
+  background-color: #f99;
+}
+
+.error-message button:hover {
+  background-color: #f77;
+}
