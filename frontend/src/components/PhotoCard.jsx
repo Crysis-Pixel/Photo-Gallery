@@ -25,6 +25,17 @@ function PhotoCard({ photo, onPersonTagCleared }) {
     setImageError(true)
   }
 
+  const getContrastColor = (hexColor) => {
+    if (!hexColor) return '#111'
+    const cleaned = hexColor.replace('#', '')
+    const bigint = parseInt(cleaned.length === 3 ? cleaned.split('').map(c => c + c).join('') : cleaned, 16)
+    const r = (bigint >> 16) & 255
+    const g = (bigint >> 8) & 255
+    const b = bigint & 255
+    const brightness = (r * 299 + g * 587 + b * 114) / 1000
+    return brightness > 150 ? '#111' : '#fff'
+  }
+
   const handleClearPersonTag = async (personId, event) => {
     event.stopPropagation()
     try {
@@ -99,11 +110,17 @@ function PhotoCard({ photo, onPersonTagCleared }) {
               <div className="person-tag-row">
                 {photo.person_ids.map((personId, idx) => {
                   const name = photo.person_names?.[idx] || `Person ${personId}`
+                  const color = photo.person_colors?.[idx] || '#e8f5e9'
                   return (
                     <span
                       key={`${photo.id}-${personId}-${idx}`}
                       className="detail-badge person label-with-remove"
                       onClick={(e) => e.stopPropagation()}
+                      style={{
+                        backgroundColor: color,
+                        color: getContrastColor(color),
+                        borderColor: color,
+                      }}
                     >
                       {name}
                       <button

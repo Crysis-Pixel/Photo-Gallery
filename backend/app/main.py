@@ -49,6 +49,9 @@ async def lifespan(app: FastAPI):
         if "sample_encodings" not in existing_columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE persons ADD COLUMN sample_encodings TEXT"))
+        if "color" not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE persons ADD COLUMN color STRING"))
 
     try:
         scan_folder_task()

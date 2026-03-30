@@ -65,6 +65,24 @@ def resolve_folder_path(folder_path: str) -> str:
 
     return candidate
 
+DEFAULT_PERSON_COLORS = [
+    '#e53935', '#8e24aa', '#3949ab', '#039be5', '#00897b',
+    '#7cb342', '#fdd835', '#fb8c00', '#6d4c41', '#546e7a'
+]
+
+def choose_person_color(db: Session) -> str:
+    used_colors = {person.color for person in db.query(Person).filter(Person.color != None).all()}
+    for color in DEFAULT_PERSON_COLORS:
+        if color not in used_colors:
+            return color
+    return DEFAULT_PERSON_COLORS[len(used_colors) % len(DEFAULT_PERSON_COLORS)]
+
+
+def get_default_person_color(person_id: int) -> str:
+    if person_id is None:
+        return DEFAULT_PERSON_COLORS[0]
+    return DEFAULT_PERSON_COLORS[person_id % len(DEFAULT_PERSON_COLORS)]
+
 try:
     import clip
 except ImportError:
@@ -184,6 +202,7 @@ def _create_new_person(db: Session, emb) -> Optional[Person]:
     """Create a new person with proper name = 'Person {id}' """
     new_person = Person(
         name="",                    # temporary
+        color=choose_person_color(db),
         encoding=json.dumps(emb.tolist()),
         sample_encodings=json.dumps([emb.tolist()])
     )

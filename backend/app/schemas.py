@@ -41,6 +41,7 @@ class FileResponse(FileBase):
     created_at: datetime
     person_ids: List[int] = []
     person_names: List[str] = []
+    person_colors: List[Optional[str]] = []
 
 _apply_orm_mode(FileResponse)
 
@@ -69,9 +70,11 @@ class PersonCreate(PersonBase):
 
 class PersonUpdate(BaseModel):
     name: Optional[str] = None
+    color: Optional[str] = None
 
 
 class PersonResponse(PersonBase):
     id: int
+    color: Optional[str] = None
  
 _apply_orm_mode(PersonResponse)

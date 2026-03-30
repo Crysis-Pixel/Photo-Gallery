@@ -21,19 +21,36 @@ class File(Base):
     def person_ids(self):
         if not self.faces:
             return []
-        return [f.person_id for f in self.faces if f.person_id is not None]
+        faces = sorted(self.faces, key=lambda f: f.id)
+        return [f.person_id for f in faces if f.person_id is not None]
 
     @property
     def person_names(self):
-        names = []
         if not self.faces:
-            return names
+            return []
+        names = []
         for f in self.faces:
+            if f.person_id is None:
+                continue
             if f.person and f.person.name:
                 names.append(f.person.name)
             else:
                 names.append(f"Person {f.person_id}")
         return names
+
+    @property
+    def person_colors(self):
+        if not self.faces:
+            return []
+        colors = []
+        for f in self.faces:
+            if f.person_id is None:
+                continue
+            if f.person and f.person.color:
+                colors.append(f.person.color)
+            else:
+                colors.append(None)
+        return colors
 
 
 class Person(Base):
@@ -41,6 +58,7 @@ class Person(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True, nullable=True)
+    color = Column(String, nullable=True)
     # Stored as a JSON list (string) of floats representing a face embedding
     encoding = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
