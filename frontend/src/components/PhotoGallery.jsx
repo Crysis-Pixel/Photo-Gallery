@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, forwardRef, useImperativeHandle, createRef } from 'react'
 import PhotoCard from './PhotoCard'
 import '../styles/PhotoGallery.css'
 
-function PhotoGallery({ persons: personsProp }) {
+const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp }, ref) {
   const [photos, setPhotos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -19,6 +19,51 @@ function PhotoGallery({ persons: personsProp }) {
   const persons = personsProp || []
   const firstFolder = folders.length > 0 ? folders[0].path : ''
 
+  // ─── Refs for scrolling ───────────────────────────────────────────────────
+  // Each photo gets its own ref. When photos change (e.g. after a filter),
+  // we create new refs only for photos that don't already have one.
+  const cardRefs = useRef({})
+
+  useEffect(() => {
+    photos.forEach(photo => {
+      if (!cardRefs.current[photo.id]) {
+        cardRefs.current[photo.id] = createRef()
+      }
+    })
+  }, [photos])
+
+  // ─── Expose scrollToPhoto to parent (App) ────────────────────────────────
+ useImperativeHandle(ref, () => ({
+  scrollToPhoto: (photoId) => {
+    setFilterCategory('')
+    setFilterScenario('')
+    setFilterPerson('')
+
+    setTimeout(() => {
+      const cardRef = cardRefs.current[photoId]
+
+      if (cardRef?.current) {
+        cardRef.current.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        })
+
+        // highlight
+        cardRef.current.classList.add('photo-card--highlight')
+        setTimeout(() => {
+          cardRef.current?.classList.remove('photo-card--highlight')
+        }, 1800)
+
+        // open modal
+        setTimeout(() => {
+          cardRef.current?.click()
+        }, 400)
+      }
+    }, 100) // wait for DOM update
+  },
+}))
+
+  // ─── Data fetching (unchanged) ───────────────────────────────────────────
   useEffect(() => {
     fetchFolders()
     fetchPhotos()
@@ -34,7 +79,6 @@ function PhotoGallery({ persons: personsProp }) {
       setError(null)
     } catch (err) {
       setError(err.message)
-      console.error('Error fetching photos:', err)
     } finally {
       setLoading(false)
     }
@@ -47,8 +91,7 @@ function PhotoGallery({ persons: personsProp }) {
       const data = await response.json()
       setFolders(Array.isArray(data) ? data : [])
       setFolderError(null)
-    } catch (err) {
-      console.error('Error fetching folder list:', err)
+    } catch {
       setFolders([])
     }
   }
@@ -56,7 +99,6 @@ function PhotoGallery({ persons: personsProp }) {
   const saveFolderPath = async (path = null) => {
     const folderToSave = (path || folderPath).trim()
     if (!folderToSave) { setFolderError('Please add a folder path first.'); return }
-
     try {
       setFolderSaving(true)
       const response = await fetch('http://localhost:8000/files/folder', {
@@ -65,8 +107,8 @@ function PhotoGallery({ persons: personsProp }) {
         body: JSON.stringify({ path: folderToSave }),
       })
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => null)
-        throw new Error(errorBody?.detail || 'Failed to save folder path')
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.detail || 'Failed to save folder path')
       }
       await response.json()
       setFolderPath('')
@@ -81,63 +123,42 @@ function PhotoGallery({ persons: personsProp }) {
   }
 
   const rescanFolder = async () => {
-    if (!folders.length) {
-      setFolderError('Please add a folder before rescanning.')
-      return
-    }
-
+    if (!folders.length) { setFolderError('Please add a folder before rescanning.'); return }
     try {
       setScanLoading(true)
       setError(null)
-
-      const response = await fetch('http://localhost:8000/files/rescan', {
-        method: 'POST',
-      })
-
+      const response = await fetch('http://localhost:8000/files/rescan', { method: 'POST' })
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => null)
-        throw new Error(errorBody?.detail || `HTTP error! status: ${response.status}`)
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.detail || `HTTP error! status: ${response.status}`)
       }
-
       await fetchPhotos()
     } catch (err) {
       setError(err.message)
-      console.error('Rescan failed:', err)
     } finally {
       setScanLoading(false)
     }
   }
 
-  const handleAddFolder = async () => {
-    await saveFolderPath()
-  }
-
   const handleRemoveFolder = async (folderId) => {
     try {
-      const response = await fetch(`http://localhost:8000/files/folder/${folderId}`, {
-        method: 'DELETE',
-      })
+      const response = await fetch(`http://localhost:8000/files/folder/${folderId}`, { method: 'DELETE' })
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => null)
-        throw new Error(errorBody?.detail || 'Failed to remove folder')
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.detail || 'Failed to remove folder')
       }
       await fetchFolders()
       await fetchPhotos()
     } catch (err) {
       setFolderError(err.message)
-      console.error('Remove folder failed:', err)
     }
   }
 
-  const getUniqueCategories = () => {
-    const categories = new Set(photos.map(p => p.category).filter(Boolean))
-    return Array.from(categories).sort()
-  }
+  const getUniqueCategories = () =>
+    Array.from(new Set(photos.map(p => p.category).filter(Boolean))).sort()
 
-  const getUniqueScenarios = () => {
-    const scenarios = new Set(photos.map(p => p.scenario).filter(Boolean))
-    return Array.from(scenarios)
-  }
+  const getUniqueScenarios = () =>
+    Array.from(new Set(photos.map(p => p.scenario).filter(Boolean)))
 
   const filteredPhotos = photos.filter(photo => {
     const categoryMatch = !filterCategory || photo.category === filterCategory
@@ -161,18 +182,23 @@ function PhotoGallery({ persons: personsProp }) {
 
   return (
     <div className="gallery-container">
+      {/* Folder controls (unchanged) */}
       <div className="folder-controls">
         <div className="folder-status">
           <strong>Current folders:</strong>
-          <span className="folder-current-path">
-            {firstFolder || 'Not configured'}
-          </span>
-          <button
-            type="button"
-            className="folder-expand-toggle"
-            onClick={() => setShowFolders(prev => !prev)}
-            aria-expanded={showFolders}
-          >
+          <span className="folder-current-path">{firstFolder || 'Not configured'}</span>
+          {firstFolder && folders.length > 0 && (
+            <button 
+              type="button" 
+              className="remove-folder-btn"
+              onClick={() => handleRemoveFolder(folders[0].id)}
+              title="Remove first folder"
+            >
+              ✕
+            </button>
+          )}
+          <button type="button" className="folder-expand-toggle"
+            onClick={() => setShowFolders(p => !p)} aria-expanded={showFolders}>
             {showFolders ? '▾' : '▸'}
           </button>
         </div>
@@ -188,13 +214,8 @@ function PhotoGallery({ persons: personsProp }) {
                 {folders.slice(1).map(folder => (
                   <li key={folder.id}>
                     <span>{folder.path}</span>
-                    <button
-                      type="button"
-                      className="remove-folder-btn"
-                      onClick={() => handleRemoveFolder(folder.id)}
-                    >
-                      ✕
-                    </button>
+                    <button type="button" className="remove-folder-btn"
+                      onClick={() => handleRemoveFolder(folder.id)}>✕</button>
                   </li>
                 ))}
               </ul>
@@ -204,22 +225,16 @@ function PhotoGallery({ persons: personsProp }) {
 
         <div className="folder-actions">
           <div className="folder-input-row">
-            <input
-              type="text"
-              value={folderPath}
-              onChange={e => setFolderPath(e.target.value)}
-              placeholder="Enter folder path anywhere on your PC"
-            />
-            <button type="button" className="folder-picker-button" onClick={handleAddFolder} disabled={folderSaving}>
+            <input type="text" value={folderPath} onChange={e => setFolderPath(e.target.value)}
+              placeholder="Enter folder path anywhere on your PC" />
+            <button type="button" className="folder-picker-button"
+              onClick={() => saveFolderPath()} disabled={folderSaving}>
               {folderSaving ? 'Adding...' : 'Add folder'}
             </button>
           </div>
-          <button
-            className="rescan-button"
-            onClick={rescanFolder}
+          <button className="rescan-button" onClick={rescanFolder}
             disabled={scanLoading || folders.length === 0}
-            title={folders.length === 0 ? 'Add folder(s) first' : 'Rescan all configured folders'}
-          >
+            title={folders.length === 0 ? 'Add folder(s) first' : 'Rescan all configured folders'}>
             {scanLoading ? 'Rescanning...' : 'Rescan folders'}
           </button>
         </div>
@@ -229,37 +244,29 @@ function PhotoGallery({ persons: personsProp }) {
         </div>
       </div>
 
+      {/* Filters (unchanged) */}
       <div className="filters">
         <div className="filter-group">
           <label>Category:</label>
           <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
             <option value="">All Categories</option>
-            {getUniqueCategories().map(c => (
-              <option key={c} value={c}>{c}</option>
-            ))}
+            {getUniqueCategories().map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-
         <div className="filter-group">
           <label>Person:</label>
           <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)}>
             <option value="">All Persons</option>
-            {persons.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
+            {persons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
-
         <div className="filter-group">
           <label>Scenario:</label>
           <select value={filterScenario} onChange={e => setFilterScenario(e.target.value)}>
             <option value="">All Scenarios</option>
-            {getUniqueScenarios().map(s => (
-              <option key={s} value={s}>{s}</option>
-            ))}
+            {getUniqueScenarios().map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
-
         <button className="refresh-btn" onClick={fetchPhotos}>Refresh</button>
       </div>
 
@@ -276,6 +283,7 @@ function PhotoGallery({ persons: personsProp }) {
                   <PhotoCard
                     key={photo.id}
                     photo={photo}
+                    cardRef={cardRefs.current[photo.id]}   // ← attach the ref
                     onPersonTagCleared={fetchPhotos}
                   />
                 ))
@@ -286,6 +294,6 @@ function PhotoGallery({ persons: personsProp }) {
       )}
     </div>
   )
-}
+})
 
 export default PhotoGallery

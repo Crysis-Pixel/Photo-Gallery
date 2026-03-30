@@ -527,6 +527,20 @@ def merge_persons(db: Session, source_id: int, target_id: int):
     return target
 
 
+def delete_person(db: Session, person_id: int):
+    person = db.query(Person).filter(Person.id == person_id).first()
+    if not person:
+        return None
+    
+    # Delete all faces associated with this person
+    db.query(Face).filter(Face.person_id == person_id).delete()
+    
+    # Delete the person
+    db.delete(person)
+    db.commit()
+    return True
+
+
 def get_person_photos(db: Session, person_id: int):
     face_rows = db.query(Face).filter(Face.person_id == person_id).all()
     file_ids = list({f.file_id for f in face_rows})

@@ -1,60 +1,69 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import '../styles/PhotoCard.css'
 
 const API = 'http://localhost:8000/files'
 
-function PhotoCard({ photo, onPersonTagCleared }) {
+function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
   const [imageError, setImageError] = useState(false)
-  const [isModalOpen, setIsModalOpen] = useState(false)
   const [personsList, setPersonsList] = useState([])
   const [loadingPersons, setLoadingPersons] = useState(false)
   const [selectedPersonForAdd, setSelectedPersonForAdd] = useState('')
   const [customPersonLabel, setCustomPersonLabel] = useState('')
+  const dialogRef = useRef(null)
+useEffect(() => {
+  const dialog = dialogRef.current
+  if (!dialog) return
 
-  useEffect(() => {
-    if (isModalOpen) {
-      setLoadingPersons(true)
-      fetch(`${API}/persons`)
-        .then(res => res.ok ? res.json() : [])
-        .then(data => setPersonsList(Array.isArray(data) ? data : []))
-        .catch(err => console.error('Error fetching persons:', err))
-        .finally(() => setLoadingPersons(false))
+  const handleClick = (e) => {
+    if (e.target === dialog) {
+      closeModal()
     }
-  }, [isModalOpen])
-
-  const getFileExtension = (path) => {
-    return path.split('.').pop().toLowerCase()
   }
 
-  const isImageFile = () => {
-    const ext = getFileExtension(photo.path)
-    return ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(ext)
+  dialog.addEventListener('click', handleClick)
+
+  return () => dialog.removeEventListener('click', handleClick)
+}, [])
+  useEffect(() => {
+  const dialog = dialogRef.current
+  if (!dialog) return
+
+  const handleCancel = (e) => {
+    e.preventDefault() // stop instant close
+    closeModal()
   }
 
-  const handleImageError = () => {
-    setImageError(true)
+  dialog.addEventListener('cancel', handleCancel)
+
+  return () => {
+    dialog.removeEventListener('cancel', handleCancel)
   }
+}, [])
+
+  const getFileExtension = (path) => path.split('.').pop().toLowerCase()
+
+  const isImageFile = () =>
+    ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(getFileExtension(photo.path))
 
   const getContrastColor = (hexColor) => {
     if (!hexColor) return '#111'
     const cleaned = hexColor.replace('#', '')
-    const bigint = parseInt(cleaned.length === 3 ? cleaned.split('').map(c => c + c).join('') : cleaned, 16)
+    const bigint = parseInt(
+      cleaned.length === 3 ? cleaned.split('').map(c => c + c).join('') : cleaned, 16
+    )
     const r = (bigint >> 16) & 255
     const g = (bigint >> 8) & 255
     const b = bigint & 255
-    const brightness = (r * 299 + g * 587 + b * 114) / 1000
-    return brightness > 150 ? '#111' : '#fff'
+    return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#111' : '#fff'
   }
 
   const handleClearPersonTag = async (personId, event) => {
     event.stopPropagation()
     try {
-      const response = await fetch(`http://localhost:8000/files/${photo.id}/persons/${personId}`, {
-        method: 'DELETE',
-      })
+      const response = await fetch(`${API}/${photo.id}/persons/${personId}`, { method: 'DELETE' })
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => null)
-        throw new Error(errorBody?.detail || 'Unable to clear person tag')
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.detail || 'Unable to clear person tag')
       }
       onPersonTagCleared?.()
     } catch (err) {
@@ -62,21 +71,10 @@ function PhotoCard({ photo, onPersonTagCleared }) {
     }
   }
 
-  // savePersonLabel removed: person label is displayed as text badge now
-
   const addLabelFromDropdown = async (event) => {
     event.stopPropagation()
     if (!selectedPersonForAdd) return
-
-    let label = ''
-    if (selectedPersonForAdd === 'other') {
-      if (!customPersonLabel.trim()) return
-      label = customPersonLabel.trim()
-    } else {
-      const pid = Number(selectedPersonForAdd)
-      const p = personsList.find(pp => pp.id === pid)
-      label = p?.name || `Person ${pid}`
-    }
+    if (selectedPersonForAdd === 'other' && !customPersonLabel.trim()) return
 
     try {
       const body = selectedPersonForAdd === 'other'
@@ -89,8 +87,8 @@ function PhotoCard({ photo, onPersonTagCleared }) {
         body: JSON.stringify(body),
       })
       if (!response.ok) {
-        const errorBody = await response.json().catch(() => null)
-        throw new Error(errorBody?.detail || 'Unable to add label')
+        const err = await response.json().catch(() => null)
+        throw new Error(err?.detail || 'Unable to add label')
       }
       setSelectedPersonForAdd('')
       setCustomPersonLabel('')
@@ -100,23 +98,51 @@ function PhotoCard({ photo, onPersonTagCleared }) {
     }
   }
 
-  const getImageUrl = () => {
-    return `http://localhost:8000/files/${photo.id}/content`
+  const getImageUrl = () => `${API}/${photo.id}/content`
+  const getFileName = () => photo.path.split('\\').pop() || photo.path.split('/').pop()
+
+  const openModal = () => {
+    if (dialogRef.current) {
+      dialogRef.current.showModal()
+      // Fetch persons when modal opens
+      setLoadingPersons(true)
+      fetch(`${API}/persons`)
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setPersonsList(Array.isArray(data) ? data : []))
+        .catch(err => console.error('Error fetching persons:', err))
+        .finally(() => setLoadingPersons(false))
+    }
   }
 
-  const getFileName = () => {
-    return photo.path.split('\\').pop() || photo.path.split('/').pop()
-  }
+  const closeModal = () => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+
+    // Add closing class → triggers CSS animation
+    dialog.classList.add('closing')
+
+    // Wait for animation to finish BEFORE closing
+    setTimeout(() => {
+      dialog.classList.remove('closing')
+      dialog.close()
+    }, 300) // must match CSS duration (0.35s ≈ 300ms)
+}
 
   return (
     <>
-      <div className="photo-card" onClick={() => setIsModalOpen(true)}>
+      {/* cardRef is attached here — PhotoGallery uses it to call scrollIntoView */}
+      <div
+        className="photo-card"
+        ref={cardRef}
+        data-photo-id={photo.id}
+        onClick={openModal}
+      >
         <div className="photo-image-container">
           {!imageError && isImageFile() ? (
             <img
               src={getImageUrl()}
               alt={getFileName()}
-              onError={handleImageError}
+              onError={() => setImageError(true)}
               className="photo-image"
             />
           ) : (
@@ -126,6 +152,7 @@ function PhotoCard({ photo, onPersonTagCleared }) {
             </div>
           )}
         </div>
+
         <div className="photo-info">
           <h3 className="photo-name">{getFileName()}</h3>
           <div className="photo-details">
@@ -154,9 +181,7 @@ function PhotoCard({ photo, onPersonTagCleared }) {
                         className="detail-badge-remove"
                         onClick={(e) => handleClearPersonTag(personId, e)}
                         title={`Remove ${name}`}
-                      >
-                        ✕
-                      </button>
+                      >✕</button>
                     </span>
                   )
                 })}
@@ -166,22 +191,20 @@ function PhotoCard({ photo, onPersonTagCleared }) {
           {photo.scenario && (
             <p className="photo-description">{photo.scenario}</p>
           )}
-          <p className="photo-date">
-            {new Date(photo.created_at).toLocaleDateString()}
-          </p>
+          <p className="photo-date">{new Date(photo.created_at).toLocaleDateString()}</p>
         </div>
       </div>
 
-      {isModalOpen && (
-        <div className="modal" onClick={() => setIsModalOpen(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={() => setIsModalOpen(false)}>✕</button>
+      {/* Modal Dialog */}
+      <dialog ref={dialogRef} className="photo-modal">
+        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <button className="modal-close" onClick={closeModal}>✕</button>
             <div className="modal-image-container">
               {!imageError && isImageFile() ? (
                 <img
                   src={getImageUrl()}
                   alt={getFileName()}
-                  onError={handleImageError}
+                  onError={() => setImageError(true)}
                   className="modal-image"
                 />
               ) : (
@@ -205,35 +228,44 @@ function PhotoCard({ photo, onPersonTagCleared }) {
                   </div>
                 )}
                 <div className="detail-item">
-                  <span className="label">Person:</span>
-                  <span className="value">{(photo.person_names && photo.person_names.length>0) ? photo.person_names.join(', ') : 'No face detected'}</span>
-                </div>
-                <div className="detail-item">
-                  <span className="label">Person</span>
-                  <div className="value">
-                    {photo.person_ids && photo.person_ids.length > 0 ? (
-                      <span
-                        className="person-badge"
-                        style={{
-                          backgroundColor: photo.person_colors?.[0] || '#e8f5e9',
-                          color: getContrastColor(photo.person_colors?.[0] || '#e8f5e9'),
-                          borderColor: photo.person_colors?.[0] || '#e8f5e9',
-                          padding: '4px 8px',
-                          borderRadius: '12px',
-                          display: 'inline-block'
-                        }}
-                      >
-                        {photo.person_names?.[0] || `Person ${photo.person_ids[0]}`}
-                      </span>
-                    ) : (
-                      <span className="value">No face detected</span>
-                    )}
-                  </div>
+                  <span className="label">People:</span>
+                  {photo.person_ids && photo.person_ids.length > 0 ? (
+                    <div className="modal-person-tags">
+                      {photo.person_ids.map((personId, idx) => {
+                        const name = photo.person_names?.[idx] || `Person ${personId}`
+                        const color = photo.person_colors?.[idx] || '#e8f5e9'
+                        return (
+                          <span
+                            key={`modal-${photo.id}-${personId}-${idx}`}
+                            className="modal-person-badge"
+                            style={{
+                              backgroundColor: color,
+                              color: getContrastColor(color),
+                              borderColor: color,
+                            }}
+                          >
+                            {name}
+                            <button
+                              type="button"
+                              className="modal-person-badge-remove"
+                              onClick={(e) => handleClearPersonTag(personId, e)}
+                              title={`Remove ${name}`}
+                            >✕</button>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <span className="value">No faces detected</span>
+                  )}
                 </div>
                 <div className="detail-item">
                   <span className="label">Add Label</span>
                   <div className="add-label-row">
-                    <select value={selectedPersonForAdd} onChange={e => setSelectedPersonForAdd(e.target.value)}>
+                    <select
+                      value={selectedPersonForAdd}
+                      onChange={e => setSelectedPersonForAdd(e.target.value)}
+                    >
                       <option value="">{loadingPersons ? 'Loading...' : 'Select a person'}</option>
                       {personsList.map(p => (
                         <option key={p.id} value={p.id}>{p.name}</option>
@@ -252,7 +284,10 @@ function PhotoCard({ photo, onPersonTagCleared }) {
                       type="button"
                       onClick={addLabelFromDropdown}
                       className="add-label-btn"
-                      disabled={!selectedPersonForAdd || (selectedPersonForAdd === 'other' && !customPersonLabel.trim())}
+                      disabled={
+                        !selectedPersonForAdd ||
+                        (selectedPersonForAdd === 'other' && !customPersonLabel.trim())
+                      }
                     >
                       Add Label
                     </button>
@@ -260,15 +295,12 @@ function PhotoCard({ photo, onPersonTagCleared }) {
                 </div>
                 <div className="detail-item">
                   <span className="label">Added:</span>
-                  <span className="value">
-                    {new Date(photo.created_at).toLocaleString()}
-                  </span>
+                  <span className="value">{new Date(photo.created_at).toLocaleString()}</span>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+      </dialog>
     </>
   )
 }

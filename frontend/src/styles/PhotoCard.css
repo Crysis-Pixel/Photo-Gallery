@@ -25,7 +25,17 @@
   overflow: hidden;
   position: relative;
 }
-
+.photo-card--highlight {
+  animation: card-highlight-pulse 1.8s ease-out forwards;
+  position: relative;
+  z-index: 1;
+}
+ 
+@keyframes card-highlight-pulse {
+  0%   { box-shadow: 0 0 0 4px #039be5, 0 4px 15px rgba(0,0,0,0.1); }
+  50%  { box-shadow: 0 0 0 6px #039be5, 0 12px 30px rgba(3,155,229,0.3); }
+  100% { box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+}
 .photo-edit-btn {
   position: absolute;
   top: 0.75rem;
@@ -259,7 +269,40 @@
   justify-content: center;
   z-index: 1000;
   padding: 1rem;
-  animation: fadeIn 0.3s ease;
+}
+
+.modal.modal-open {
+  animation: fadeIn 0.35s ease forwards;
+}
+
+.modal.modal-close {
+  animation: fadeOut 0.35s ease forwards !important;
+  pointer-events: none;
+}
+
+/* Dialog styles */
+.photo-modal {
+  border: none;
+  border-radius: 18px;
+  max-width: 90vw;
+  max-height: 90vh;
+  padding: 0;
+  background: white;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
+  animation: slideUp 0.35s ease forwards;
+}
+
+.photo-modal::backdrop {
+  background: rgba(0, 0, 0, 0.7);
+  animation: fadeIn 0.35s ease forwards;
+}
+
+.photo-modal.closing {
+  animation: slideDown 0.35s ease forwards !important;
+}
+
+.photo-modal.closing::backdrop {
+  animation: fadeOut 0.35s ease forwards !important;
 }
 
 @keyframes fadeIn {
@@ -271,27 +314,45 @@
   }
 }
 
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
 .modal-content {
-  background: white;
-  border-radius: 18px;
-  max-width: 90vw;
-  max-height: 90vh;
   display: grid;
   grid-template-columns: minmax(280px, 1.5fr) 1fr;
-  overflow: hidden;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.25);
-  animation: slideUp 0.3s ease;
-  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.modal.modal-close .modal-content {
+  animation: slideDown 0.35s ease forwards !important;
 }
 
 @keyframes slideUp {
   from {
-    transform: translateY(20px);
+    transform: translateY(30px);
     opacity: 0;
   }
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateY(30px);
+    opacity: 0;
   }
 }
 
@@ -405,6 +466,46 @@
   padding-left: 0.75rem;
 }
 
+.modal-person-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.modal-person-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 20px;
+  border: 1.5px solid;
+  font-size: 0.85rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.modal-person-badge:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.modal-person-badge-remove {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 0;
+  margin-left: 0.25rem;
+  opacity: 0.8;
+  transition: opacity 0.2s ease;
+}
+
+.modal-person-badge-remove:hover {
+  opacity: 1;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .modal-content {
@@ -420,3 +521,13 @@
     max-height: 45vh;
   }
 }
+.photo-card--highlight {
+  animation: card-highlight-pulse 1.8s ease-out forwards;
+}
+ 
+@keyframes card-highlight-pulse {
+  0%   { box-shadow: 0 0 0 4px #039be5, 0 4px 15px rgba(0,0,0,0.1); }
+  50%  { box-shadow: 0 0 0 7px #039be5, 0 12px 30px rgba(3,155,229,0.25); }
+  100% { box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+}
+ 

@@ -3,7 +3,7 @@ import '../styles/PersonManager.css'
 
 const API = 'http://localhost:8000/files'
 
-export default function PersonManager({ onPersonsChange }) {
+export default function PersonManager({ onPersonsChange, onPhotoClick }) {
   const [persons, setPersons] = useState([])
   const [photos, setPhotos] = useState({})          // { personId: [photo, …] }
   const [editingId, setEditingId] = useState(null)
@@ -12,6 +12,7 @@ export default function PersonManager({ onPersonsChange }) {
   const [loadingPhotos, setLoadingPhotos] = useState({})
   const [expandedId, setExpandedId] = useState(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [deleteConfirmId, setDeleteConfirmId] = useState(null)
   const inputRef = useRef(null)
   const personGridRef = useRef(null)
   const dragStartXRef = useRef(0)
@@ -22,6 +23,7 @@ export default function PersonManager({ onPersonsChange }) {
   const momentumLastTimeRef = useRef(0)
   const loadedThumbnailsRef = useRef(new Set())
   const MOMENTUM_MULTIPLIER = 4
+  const [isClosingModal, setIsClosingModal] = useState(false)
 
   useEffect(() => { fetchPersons() }, [])
   useEffect(() => { if (editingId && inputRef.current) inputRef.current.focus() }, [editingId])
@@ -67,7 +69,6 @@ export default function PersonManager({ onPersonsChange }) {
         // FIX: invalidate this person's cached photo list so the avatar
         // thumbnail re-fetches on next expand (the photo URL itself doesn't
         // change, but person_name on each File record was updated server-side).
-        setPhotos(p => { const next = { ...p }; delete next[id]; return next })
         await fetchPersons()
       }
     } catch (e) { console.error(e) }
@@ -78,6 +79,36 @@ export default function PersonManager({ onPersonsChange }) {
     setMergeSource(id)
     setExpandedId(null)
   }
+
+  const removePerson = async (id) => {
+    setDeleteConfirmId(id)
+  }
+
+  const confirmDeletePerson = async (id) => {
+  try {
+    const res = await fetch(`${API}/persons/${id}`, { method: 'DELETE' })
+    if (res.ok) {
+      setPhotos(p => { const next = { ...p }; delete next[id]; return next })
+      await fetchPersons()
+    }
+  } catch (e) { 
+    console.error(e) 
+  } finally {
+    closeDeleteModal() // ✅ instead of setDeleteConfirmId(null)
+  }
+}
+
+  const closeDeleteModal = () => {
+    setIsClosingModal(true)
+
+    setTimeout(() => {
+      setDeleteConfirmId(null)
+      setIsClosingModal(false)
+    }, 300) // match CSS
+}
+const cancelDeletePerson = () => {
+  closeDeleteModal()
+}
 
   useEffect(() => {
     if (!persons.length) return
@@ -296,6 +327,15 @@ export default function PersonManager({ onPersonsChange }) {
               key={person.id}
               className={`pm-card ${isSource ? 'pm-card--source' : ''} ${mergeSource && !isSource ? 'pm-card--merge-target' : ''}`}
             >
+              {/* Remove button - top right corner */}
+              <button
+                className="pm-card-remove-btn"
+                onClick={() => removePerson(person.id)}
+                title="Remove person"
+              >
+                ✕
+              </button>
+
               {/* Avatar */}
               <div className="pm-avatar">
                 {personPhotos[0]
@@ -364,8 +404,21 @@ export default function PersonManager({ onPersonsChange }) {
                           key={photo.id}
                           src={`${API}/${photo.id}/content`}
                           alt=""
-                          className="pm-strip-thumb"
+                          className="pm-strip-thumb pm-strip-thumb--clickable"
                           title={photo.path.split(/[\\/]/).pop()}
+                          onClick={() => {
+                            console.log('Thumbnail clicked, photoId:', photo.id)
+                            onPhotoClick?.(photo.id)
+                          }}
+                          role="button"
+                          tabIndex="0"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault()
+                              console.log('Thumbnail key pressed, photoId:', photo.id)
+                              onPhotoClick?.(photo.id)
+                            }
+                          }}
                         />
                       ))
                   }
@@ -378,6 +431,31 @@ export default function PersonManager({ onPersonsChange }) {
           )
         })}
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmId && (
+        <div 
+  className={`pm-modal-overlay ${isClosingModal ? 'closing' : ''}`} 
+  onClick={cancelDeletePerson}
+>
+          <div className="pm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pm-modal-icon">⚠️</div>
+            <h3 className="pm-modal-title">Remove Person?</h3>
+            <p className="pm-modal-message">
+              Are you sure you want to remove <strong>{persons.find(p => p.id === deleteConfirmId)?.name}</strong>?
+            </p>
+            <p className="pm-modal-warning">This action cannot be undone.</p>
+            <div className="pm-modal-actions">
+              <button className="pm-modal-btn pm-modal-btn-cancel" onClick={cancelDeletePerson}>
+                Cancel
+              </button>
+              <button className="pm-modal-btn pm-modal-btn-delete" onClick={() => confirmDeletePerson(deleteConfirmId)}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }

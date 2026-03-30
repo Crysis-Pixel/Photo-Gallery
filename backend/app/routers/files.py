@@ -36,6 +36,14 @@ def patch_person(person_id: int, update: schemas.PersonUpdate, db: Session = Dep
     return person
 
 
+@router.delete("/persons/{person_id}")
+def delete_person(person_id: int, db: Session = Depends(get_db)):
+    result = crud.delete_person(db, person_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Person not found")
+    return {"message": "Person deleted successfully"}
+
+
 @router.post("/persons/{person_id}/merge/{into_id}", response_model=schemas.PersonResponse)
 def merge_persons(person_id: int, into_id: int, db: Session = Depends(get_db)):
     if person_id == into_id:

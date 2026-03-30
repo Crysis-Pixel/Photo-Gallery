@@ -10,7 +10,19 @@
   display: grid;
   gap: 1rem;
 }
-
+.photo-card--highlight {
+  outline: 3px solid #039be5;
+  outline-offset: 3px;
+  border-radius: 10px;
+  animation: card-highlight-pulse 1.5s ease-out forwards;
+}
+ 
+@keyframes card-highlight-pulse {
+  0%   { outline-color: #039be5; outline-width: 3px; }
+  60%  { outline-color: #039be5; outline-width: 3px; }
+  100% { outline-color: transparent; outline-width: 0px; }
+}
+ 
 .folder-status {
   display: flex;
   align-items: center;
