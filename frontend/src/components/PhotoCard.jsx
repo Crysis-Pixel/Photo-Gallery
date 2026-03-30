@@ -1,16 +1,26 @@
 import { useState, useEffect } from 'react'
 import '../styles/PhotoCard.css'
 
+const API = 'http://localhost:8000/files'
+
 function PhotoCard({ photo, onPersonTagCleared }) {
   const [imageError, setImageError] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [personLabelInput, setPersonLabelInput] = useState(photo.person_name || '')
+  const [personsList, setPersonsList] = useState([])
+  const [loadingPersons, setLoadingPersons] = useState(false)
+  const [selectedPersonForAdd, setSelectedPersonForAdd] = useState('')
+  const [customPersonLabel, setCustomPersonLabel] = useState('')
 
   useEffect(() => {
     if (isModalOpen) {
-      setPersonLabelInput(photo.person_name || '')
+      setLoadingPersons(true)
+      fetch(`${API}/persons`)
+        .then(res => res.ok ? res.json() : [])
+        .then(data => setPersonsList(Array.isArray(data) ? data : []))
+        .catch(err => console.error('Error fetching persons:', err))
+        .finally(() => setLoadingPersons(false))
     }
-  }, [isModalOpen, photo.person_name])
+  }, [isModalOpen])
 
   const getFileExtension = (path) => {
     return path.split('.').pop().toLowerCase()
@@ -52,25 +62,41 @@ function PhotoCard({ photo, onPersonTagCleared }) {
     }
   }
 
-  const savePersonLabel = async (event) => {
+  // savePersonLabel removed: person label is displayed as text badge now
+
+  const addLabelFromDropdown = async (event) => {
     event.stopPropagation()
-    if (!personLabelInput.trim()) {
-      return
+    if (!selectedPersonForAdd) return
+
+    let label = ''
+    if (selectedPersonForAdd === 'other') {
+      if (!customPersonLabel.trim()) return
+      label = customPersonLabel.trim()
+    } else {
+      const pid = Number(selectedPersonForAdd)
+      const p = personsList.find(pp => pp.id === pid)
+      label = p?.name || `Person ${pid}`
     }
 
     try {
-      const response = await fetch(`http://localhost:8000/files/${photo.id}`, {
-        method: 'PATCH',
+      const body = selectedPersonForAdd === 'other'
+        ? { person_name: customPersonLabel.trim() }
+        : { person_id: Number(selectedPersonForAdd) }
+
+      const response = await fetch(`${API}/${photo.id}/persons`, {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ person_name: personLabelInput.trim() }),
+        body: JSON.stringify(body),
       })
       if (!response.ok) {
         const errorBody = await response.json().catch(() => null)
-        throw new Error(errorBody?.detail || 'Unable to save person label')
+        throw new Error(errorBody?.detail || 'Unable to add label')
       }
+      setSelectedPersonForAdd('')
+      setCustomPersonLabel('')
       onPersonTagCleared?.()
     } catch (err) {
-      console.error('Error saving person label:', err)
+      console.error('Error adding label:', err)
     }
   }
 
@@ -183,16 +209,52 @@ function PhotoCard({ photo, onPersonTagCleared }) {
                   <span className="value">{(photo.person_names && photo.person_names.length>0) ? photo.person_names.join(', ') : 'No face detected'}</span>
                 </div>
                 <div className="detail-item">
-                  <span className="label">Person label</span>
-                  <div className="person-label-edit-row">
-                    <input
-                      type="text"
-                      value={personLabelInput}
-                      onChange={e => setPersonLabelInput(e.target.value)}
-                      placeholder="Add a label"
-                    />
-                    <button type="button" onClick={savePersonLabel} className="save-person-label-btn">
-                      Save
+                  <span className="label">Person</span>
+                  <div className="value">
+                    {photo.person_ids && photo.person_ids.length > 0 ? (
+                      <span
+                        className="person-badge"
+                        style={{
+                          backgroundColor: photo.person_colors?.[0] || '#e8f5e9',
+                          color: getContrastColor(photo.person_colors?.[0] || '#e8f5e9'),
+                          borderColor: photo.person_colors?.[0] || '#e8f5e9',
+                          padding: '4px 8px',
+                          borderRadius: '12px',
+                          display: 'inline-block'
+                        }}
+                      >
+                        {photo.person_names?.[0] || `Person ${photo.person_ids[0]}`}
+                      </span>
+                    ) : (
+                      <span className="value">No face detected</span>
+                    )}
+                  </div>
+                </div>
+                <div className="detail-item">
+                  <span className="label">Add Label</span>
+                  <div className="add-label-row">
+                    <select value={selectedPersonForAdd} onChange={e => setSelectedPersonForAdd(e.target.value)}>
+                      <option value="">{loadingPersons ? 'Loading...' : 'Select a person'}</option>
+                      {personsList.map(p => (
+                        <option key={p.id} value={p.id}>{p.name}</option>
+                      ))}
+                      <option value="other">Other...</option>
+                    </select>
+                    {selectedPersonForAdd === 'other' && (
+                      <input
+                        type="text"
+                        value={customPersonLabel}
+                        onChange={e => setCustomPersonLabel(e.target.value)}
+                        placeholder="Type name..."
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={addLabelFromDropdown}
+                      className="add-label-btn"
+                      disabled={!selectedPersonForAdd || (selectedPersonForAdd === 'other' && !customPersonLabel.trim())}
+                    >
+                      Add Label
                     </button>
                   </div>
                 </div>

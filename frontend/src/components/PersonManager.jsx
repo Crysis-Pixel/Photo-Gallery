@@ -227,11 +227,29 @@ export default function PersonManager({ onPersonsChange }) {
 
   const confirmMerge = async (targetId) => {
     if (!mergeSource || mergeSource === targetId) return
+    const sourceId = mergeSource
     try {
-      const res = await fetch(`${API}/persons/${mergeSource}/merge/${targetId}`, { method: 'POST' })
+      const res = await fetch(`${API}/persons/${sourceId}/merge/${targetId}`, { method: 'POST' })
       if (res.ok) {
-        setPhotos({})          // invalidate all cached photo lists
-        setExpandedId(null)
+        // Optimistically merge cached photo lists so the target's avatar
+        // remains visible immediately instead of falling back to the default.
+        setPhotos(prev => {
+          const next = { ...prev }
+          const srcPhotos = Array.isArray(next[sourceId]) ? next[sourceId] : []
+          const tgtPhotos = Array.isArray(next[targetId]) ? next[targetId] : []
+          const existingIds = new Set(tgtPhotos.map(p => p.id))
+          const merged = [
+            ...tgtPhotos,
+            ...srcPhotos.filter(p => !existingIds.has(p.id)),
+          ]
+          next[targetId] = merged
+          delete next[sourceId]
+          return next
+        })
+
+        // If the source was expanded, collapse it because it will be removed.
+        if (expandedId === sourceId) setExpandedId(null)
+
         setMergeSource(null)
         await fetchPersons()
       }

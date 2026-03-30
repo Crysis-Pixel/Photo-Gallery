@@ -36,6 +36,11 @@ class FileUpdate(BaseModel):
     scenario: Optional[str] = None
     person_name: Optional[str] = None
 
+
+class FilePersonAdd(BaseModel):
+    person_id: Optional[int] = None
+    person_name: Optional[str] = None
+
 class FileResponse(FileBase):
     id: int
     created_at: datetime

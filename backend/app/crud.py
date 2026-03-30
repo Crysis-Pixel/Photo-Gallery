@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from app.models import File, FolderConfig, Person, Face
@@ -10,16 +10,14 @@ import mediapipe as mp
 import os
 import re
 import json
-import insightface
-from insightface.app import FaceAnalysis
 import numpy as np
-from PIL import Image
-import cv2
 
 # ── InsightFace Setup ───────────────────────────────────────────────────────
 try:
-    # buffalo_l is the best balanced model (recommended for personal photos)
-    # You can also try 'buffalo_m' or 'buffalo_s' if memory is limited
+    import insightface
+    from insightface.app import FaceAnalysis
+    import cv2
+
     providers = ['CPUExecutionProvider']
     if torch.cuda.is_available():
         providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
@@ -35,7 +33,9 @@ except Exception as e:
     print(f"InsightFace failed to load: {e}")
     INSIGHTFACE_AVAILABLE = False
 
+
 WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+
 
 def resolve_folder_path(folder_path: str) -> str:
     if not folder_path:
@@ -65,10 +65,12 @@ def resolve_folder_path(folder_path: str) -> str:
 
     return candidate
 
+
 DEFAULT_PERSON_COLORS = [
     '#e53935', '#8e24aa', '#3949ab', '#039be5', '#00897b',
     '#7cb342', '#fdd835', '#fb8c00', '#6d4c41', '#546e7a'
 ]
+
 
 def choose_person_color(db: Session) -> str:
     used_colors = {person.color for person in db.query(Person).filter(Person.color != None).all()}
@@ -82,6 +84,7 @@ def get_default_person_color(person_id: int) -> str:
     if person_id is None:
         return DEFAULT_PERSON_COLORS[0]
     return DEFAULT_PERSON_COLORS[person_id % len(DEFAULT_PERSON_COLORS)]
+
 
 try:
     import clip
@@ -103,6 +106,27 @@ try:
 except Exception as e:
     print(f"BLIP model not available: {e}")
     BLIP_AVAILABLE = False
+
+try:
+    from facenet_pytorch import MTCNN, InceptionResnetV1
+    mtcnn = MTCNN(keep_all=True, device=device)
+    resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+    FACENET_AVAILABLE = True
+except Exception as e:
+    print(f"facenet-pytorch not available: {e}")
+    FACENET_AVAILABLE = False
+
+
+# ── Session helper ─────────────────────────────────────────────────────────────
+
+def _safe_rollback(db: Session):
+    try:
+        db.rollback()
+    except Exception:
+        pass
+
+
+# ── Image helpers ──────────────────────────────────────────────────────────────
 
 def get_image_description(image: Image.Image) -> str:
     if not BLIP_AVAILABLE:
@@ -128,30 +152,9 @@ def sanitize_description(text: str) -> str:
     return text
 
 
-try:
-    from facenet_pytorch import MTCNN, InceptionResnetV1
-    mtcnn = MTCNN(keep_all=True, device=device)
-    resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
-    FACENET_AVAILABLE = True
-except Exception as e:
-    print(f"facenet-pytorch not available: {e}")
-    FACENET_AVAILABLE = False
-
-
-# ── Session helper ─────────────────────────────────────────────────────────────
-
-def _safe_rollback(db: Session):
-    """Roll back the session, silently ignoring any secondary errors."""
-    try:
-        db.rollback()
-    except Exception:
-        pass
-
-
 # ── Embedding helpers ──────────────────────────────────────────────────────────
 
 def best_similarity(person: Person, emb) -> float:
-    import numpy as np
     encodings_to_check = []
     if person.encoding:
         try:
@@ -176,7 +179,6 @@ def best_similarity(person: Person, emb) -> float:
 
 
 def update_person_encoding(person: Person, emb):
-    import numpy as np
     if person.encoding:
         try:
             old_enc = np.array(json.loads(person.encoding), dtype=np.float32)
@@ -199,20 +201,16 @@ def update_person_encoding(person: Person, emb):
 
 
 def _create_new_person(db: Session, emb) -> Optional[Person]:
-    """Create a new person with proper name = 'Person {id}' """
     new_person = Person(
-        name="",                    # temporary
+        name="",
         color=choose_person_color(db),
         encoding=json.dumps(emb.tolist()),
         sample_encodings=json.dumps([emb.tolist()])
     )
     db.add(new_person)
-    db.flush()                      # Get the ID from DB
-
-    # Now set the proper name
+    db.flush()
     new_person.name = f"Person {new_person.id}"
     db.flush()
-
     return new_person
 
 
@@ -244,23 +242,19 @@ def auto_tag_file(db: Session, db_file: File):
         if description:
             db_file.scenario = sanitize_description(description)
 
-               # ── Face detection / recognition ──
+        # ── Face detection / recognition ──
         try:
-            import numpy as np
+            SIM_THRESHOLD = 0.65
+            MIN_FACE_RATIO = 0.07
 
-            # Recommended starting values:
-            SIM_THRESHOLD = 0.65      # ← Higher = stricter matching (less "same person split")
-            MIN_FACE_RATIO = 0.07     # ← ~7% of image dimension (good for main subjects)
-
-            # Clear old faces
             db.query(Face).filter(Face.file_id == db_file.id).delete(synchronize_session=False)
 
             if INSIGHTFACE_AVAILABLE:
                 _tag_faces_insightface(db, db_file, image, np, SIM_THRESHOLD, MIN_FACE_RATIO)
             elif FACENET_AVAILABLE:
-                _tag_faces_facenet(...)   # keep as fallback if you want
+                _tag_faces_facenet(db, db_file, image, np, SIM_THRESHOLD)
             else:
-                _tag_faces_mediapipe(...) 
+                _tag_faces_mediapipe(db, db_file, image, np)
 
         except Exception as face_e:
             print(f"Face detection skipped for {file_path}: {face_e}")
@@ -280,14 +274,9 @@ def auto_tag_file(db: Session, db_file: File):
     return db_file
 
 
-def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np, 
-                           SIM_THRESHOLD: float = 0.60, 
-                           MIN_FACE_RATIO: float = 0.07):
-    """
-    InsightFace tagging with two improvements:
-    - Higher similarity threshold to reduce "same person → different persons"
-    - Filter small/background faces by relative size + detection confidence
-    """
+def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
+                            SIM_THRESHOLD: float = 0.65,
+                            MIN_FACE_RATIO: float = 0.07):
     if not INSIGHTFACE_AVAILABLE:
         db_file.person_name = None
         return
@@ -295,12 +284,10 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
     try:
         img_np = np.array(image.convert("RGB"))
         height, width = img_np.shape[:2]
-        min_face_area = (width * height) * (MIN_FACE_RATIO ** 2)   # e.g., 7% of image width/height
+        min_face_area = (width * height) * (MIN_FACE_RATIO ** 2)
 
-        # Get all faces
         faces = face_analyzer.get(img_np)
-
-        if not faces or len(faces) == 0:
+        if not faces:
             db_file.person_name = None
             return
 
@@ -311,34 +298,26 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
         for face in faces:
             if face.embedding is None:
                 continue
-
-            # === Filter 1: Detection confidence ===
-            if getattr(face, 'det_score', 0.0) < 0.5:   # skip low-confidence detections
+            if getattr(face, 'det_score', 0.0) < 0.5:
                 continue
-
-            # === Filter 2: Face size (ignore tiny background faces) ===
             bbox = face.bbox.astype(int)
             face_width = bbox[2] - bbox[0]
             face_height = bbox[3] - bbox[1]
             face_area = face_width * face_height
-
             if face_area < min_face_area:
                 print(f"[insightface-skip-small] file={db_file.path} face_size={face_width}x{face_height}")
                 continue
-
             valid_faces.append(face)
 
         if not valid_faces:
             db_file.person_name = None
             return
 
-        # Process only valid (main) faces
         for face in valid_faces:
-            emb = face.embedding.astype(np.float32)   # already normalized by InsightFace
+            emb = face.embedding.astype(np.float32)
 
             best_sim = -1.0
             best_person = None
-
             for person in persons:
                 sim = best_similarity(person, emb)
                 if sim > best_sim:
@@ -363,7 +342,6 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
             db.add(face_row)
             used_person_ids.append(matched_person.id)
 
-        # Set main person (first valid face)
         if used_person_ids:
             first_person = db.query(Person).filter(Person.id == used_person_ids[0]).first()
             db_file.person_name = first_person.name if first_person else None
@@ -372,6 +350,129 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
 
     except Exception as e:
         print(f"InsightFace tagging failed for {db_file.path}: {e}")
+        _safe_rollback(db)
+        db_file.person_name = None
+
+
+def _tag_faces_facenet(db: Session, db_file: File, image, np, SIM_THRESHOLD: float):
+    try:
+        face_tensors = mtcnn(image)
+        if face_tensors is None:
+            db_file.person_name = None
+            return
+
+        if isinstance(face_tensors, list):
+            if not face_tensors:
+                db_file.person_name = None
+                return
+            face_batch = torch.stack(face_tensors).to(device)
+        elif isinstance(face_tensors, torch.Tensor):
+            face_batch = face_tensors.unsqueeze(0).to(device) if face_tensors.ndim == 3 else face_tensors.to(device)
+        else:
+            db_file.person_name = None
+            return
+
+        with torch.no_grad():
+            embeddings = resnet(face_batch)
+            embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+            embeddings_np = embeddings.cpu().numpy()
+
+        persons = db.query(Person).all()
+        used_person_ids = []
+
+        for emb in embeddings_np:
+            best_sim = -1.0
+            best_person = None
+            for person in persons:
+                sim = best_similarity(person, emb)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_person = person
+
+            if best_sim >= SIM_THRESHOLD and best_person is not None:
+                matched_person = best_person
+                update_person_encoding(matched_person, emb)
+                db.add(matched_person)
+            else:
+                matched_person = _create_new_person(db, emb)
+                if matched_person is None:
+                    continue
+                persons.append(matched_person)
+
+            face = Face(file_id=db_file.id, person_id=matched_person.id)
+            db.add(face)
+            used_person_ids.append(matched_person.id)
+            print(f"[face-match] file={db_file.path} person_id={matched_person.id} name={matched_person.name} sim={best_sim:.4f}")
+
+        if used_person_ids:
+            first_person = db.query(Person).filter(Person.id == used_person_ids[0]).first()
+            db_file.person_name = first_person.name if first_person else None
+        else:
+            db_file.person_name = None
+
+    except Exception as e:
+        print(f"FaceNet detection failure for {db_file.path}: {e}")
+        _safe_rollback(db)
+        db_file.person_name = None
+
+
+def _tag_faces_mediapipe(db: Session, db_file: File, image, np):
+    SIM_THRESHOLD = 0.75
+    try:
+        mp_face_mesh = mp.solutions.face_mesh
+        image_array = np.array(image)
+        with mp_face_mesh.FaceMesh(
+            static_image_mode=True, max_num_faces=10,
+            refine_landmarks=False, min_detection_confidence=0.5
+        ) as face_mesh:
+            results_mesh = face_mesh.process(image_array)
+
+            if not (results_mesh and results_mesh.multi_face_landmarks):
+                db_file.person_name = None
+                return
+
+            persons = db.query(Person).all()
+            used_person_ids = []
+
+            for fl in results_mesh.multi_face_landmarks:
+                encoding = []
+                for lm in fl.landmark:
+                    encoding.extend([lm.x, lm.y, getattr(lm, "z", 0.0)])
+                embedding = np.array(encoding, dtype=np.float32)
+                norm = np.linalg.norm(embedding)
+                if norm > 0:
+                    embedding /= norm
+
+                best_sim = -1.0
+                best_person = None
+                for person in persons:
+                    sim = best_similarity(person, embedding)
+                    if sim > best_sim:
+                        best_sim = sim
+                        best_person = person
+
+                if best_person is not None and best_sim >= SIM_THRESHOLD:
+                    matched_person = best_person
+                    update_person_encoding(matched_person, embedding)
+                    db.add(matched_person)
+                else:
+                    matched_person = _create_new_person(db, embedding)
+                    if matched_person is None:
+                        continue
+                    persons.append(matched_person)
+
+                face = Face(file_id=db_file.id, person_id=matched_person.id)
+                db.add(face)
+                used_person_ids.append(matched_person.id)
+
+            if used_person_ids:
+                first_person = db.query(Person).filter(Person.id == used_person_ids[0]).first()
+                db_file.person_name = first_person.name if first_person else None
+            else:
+                db_file.person_name = None
+
+    except Exception as e:
+        print(f"MediaPipe fallback skipped for {db_file.path}: {e}")
         _safe_rollback(db)
         db_file.person_name = None
 
@@ -413,7 +514,6 @@ def merge_persons(db: Session, source_id: int, target_id: int):
         db.add(file)
 
     try:
-        import numpy as np
         src_samples = json.loads(source.sample_encodings or "[]")
         tgt_samples = json.loads(target.sample_encodings or "[]")
         target.sample_encodings = json.dumps((tgt_samples + src_samples)[-5:])
@@ -432,16 +532,18 @@ def get_person_photos(db: Session, person_id: int):
     file_ids = list({f.file_id for f in face_rows})
     if not file_ids:
         return []
-    return db.query(File).filter(File.id.in_(file_ids)).all()
+    return db.query(File).filter(File.id.in_(file_ids)).order_by(File.path).all()
 
 
 # ── Folder / scan ──────────────────────────────────────────────────────────────
 
 def get_scan_folder(db: Session):
+    """Return the first (oldest) configured folder. Kept for backwards compat."""
     return db.query(FolderConfig).order_by(FolderConfig.id).first()
 
 
 def get_scan_folders(db: Session):
+    """Return ALL configured folders ordered by id."""
     return db.query(FolderConfig).order_by(FolderConfig.id).all()
 
 
@@ -467,6 +569,7 @@ def delete_scan_folder(db: Session, folder_id: int):
 
 
 def set_scan_folder(db: Session, folder_path: str):
+    """Upsert a single folder (legacy behaviour — updates the first row)."""
     folder_path = resolve_folder_path(folder_path)
     folder_config = get_scan_folder(db)
     if folder_config:
@@ -531,21 +634,88 @@ def update_file(db: Session, file_id: int, updates: FileUpdate):
     return db_file
 
 
+def add_file_person_tag(db: Session, file_id: int, person_id: Optional[int] = None,
+                        person_name: Optional[str] = None):
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file:
+        return None
+
+    person = None
+    if person_id is not None:
+        person = db.query(Person).filter(Person.id == person_id).first()
+        if not person:
+            return None
+
+    if person is None and person_name:
+        person = db.query(Person).filter(Person.name == person_name).first()
+        if person is None:
+            person = Person(name=person_name, color=choose_person_color(db))
+            db.add(person)
+            db.commit()
+            db.refresh(person)
+
+    if person is None:
+        return None
+
+    existing = db.query(Face).filter(Face.file_id == file_id, Face.person_id == person.id).first()
+    if not existing:
+        face_row = Face(file_id=file_id, person_id=person.id)
+        db.add(face_row)
+
+    file.person_name = person.name
+    db.add(file)
+    try:
+        db.commit()
+    except Exception:
+        _safe_rollback(db)
+    db.refresh(file)
+    return file
+
+
 def get_file_by_id(db: Session, file_id: int):
     return db.query(File).filter(File.id == file_id).first()
 
 
-def get_files(db: Session, folder_path: Optional[str] = None, skip: int = 0, limit: int = 100):
-    query = db.query(File)
-    if folder_path:
-        normalized_folder = os.path.normpath(resolve_folder_path(folder_path))
-        all_files = query.all()
-        matching_ids = [
-            f.id for f in all_files
-            if os.path.normpath(f.path).lower().startswith(normalized_folder.lower() + os.sep)
-        ]
-        return db.query(File).filter(File.id.in_(matching_ids)).offset(skip).limit(limit).all()
-    return query.offset(skip).limit(limit).all()
+def get_file_by_path(db: Session, path: str):
+    if not path:
+        return None
+    return db.query(File).filter(File.path == path).first()
+
+
+def get_files(db: Session, folder_paths: Optional[List[str]] = None,
+              folder_path: Optional[str] = None, skip: int = 0, limit: int = 100):
+    """
+    Return files under one or more folder paths with a stable ORDER BY path.
+
+    Uses Python-side path prefix filtering to avoid SQLite LIKE escaping issues
+    with Windows backslashes.  All rows are fetched once, filtered and sorted in
+    Python, then offset/limit is applied — safe for galleries up to ~100k files.
+    """
+    # Normalise inputs into a list of lowercase absolute folder prefixes.
+    # We append os.sep so that /photos does not accidentally match /photos2.
+    prefixes: List[str] = []
+    if folder_paths:
+        for p in folder_paths:
+            resolved = os.path.normpath(resolve_folder_path(p)).lower()
+            prefixes.append(resolved + os.sep)
+    elif folder_path:
+        resolved = os.path.normpath(resolve_folder_path(folder_path)).lower()
+        prefixes.append(resolved + os.sep)
+
+    # Fetch all files ordered by path (deterministic, fixes the mismatch bug).
+    all_files = db.query(File).order_by(File.path).all()
+
+    if not prefixes:
+        # No folder filter — return everything with pagination.
+        return all_files[skip: skip + limit]
+
+    # Filter in Python: safe on Windows backslashes, Linux forward-slashes, mixed.
+    filtered = [
+        f for f in all_files
+        if any(os.path.normpath(f.path).lower().startswith(pfx) for pfx in prefixes)
+    ]
+
+    return filtered[skip: skip + limit]
 
 
 def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
@@ -554,9 +724,6 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
 
     Each file is processed in its own fresh DB session so that a failure on
     one image cannot poison the transaction for subsequent images.
-
-    NOTE: `db` here is only used to read folder config upstream; each file
-    is processed with its own `file_db` session opened below.
     """
     from app.database import SessionLocal
 
@@ -609,7 +776,6 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
                 except Exception:
                     file_db.rollback()
 
-            # FIX: use file_db (per-file session), not the outer db session
             auto_tag_file(file_db, db_file)
             results["tagged_files"] += 1
 

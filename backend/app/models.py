@@ -28,8 +28,9 @@ class File(Base):
     def person_names(self):
         if not self.faces:
             return []
+        faces = sorted(self.faces, key=lambda f: f.id)
         names = []
-        for f in self.faces:
+        for f in faces:
             if f.person_id is None:
                 continue
             if f.person and f.person.name:
@@ -42,8 +43,9 @@ class File(Base):
     def person_colors(self):
         if not self.faces:
             return []
+        faces = sorted(self.faces, key=lambda f: f.id)
         colors = []
-        for f in self.faces:
+        for f in faces:
             if f.person_id is None:
                 continue
             if f.person and f.person.color:
