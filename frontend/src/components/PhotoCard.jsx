@@ -5,45 +5,70 @@ const API = 'http://localhost:8000/files'
 
 function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
   const [imageError, setImageError] = useState(false)
+  const [videoError, setVideoError] = useState(false)
+
+  // Person Tagging State
   const [personsList, setPersonsList] = useState([])
   const [loadingPersons, setLoadingPersons] = useState(false)
   const [selectedPersonForAdd, setSelectedPersonForAdd] = useState('')
   const [customPersonLabel, setCustomPersonLabel] = useState('')
-  const dialogRef = useRef(null)
-useEffect(() => {
-  const dialog = dialogRef.current
-  if (!dialog) return
 
-  const handleClick = (e) => {
-    if (e.target === dialog) {
+  // Video Playback State
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [showPlayOverlay, setShowPlayOverlay] = useState(true)
+
+  // Refs
+  const dialogRef = useRef(null)
+  const cardVideoRef = useRef(null)
+  const modalVideoRef = useRef(null)
+
+  // --- Effects ---
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+
+    const handleClick = (e) => {
+      if (e.target === dialog) closeModal()
+    }
+    const handleCancel = (e) => {
+      e.preventDefault()
       closeModal()
     }
-  }
 
-  dialog.addEventListener('click', handleClick)
+    dialog.addEventListener('click', handleClick)
+    dialog.addEventListener('cancel', handleCancel)
+    return () => {
+      dialog.removeEventListener('click', handleClick)
+      dialog.removeEventListener('cancel', handleCancel)
+    }
+  }, [])
 
-  return () => dialog.removeEventListener('click', handleClick)
-}, [])
   useEffect(() => {
-  const dialog = dialogRef.current
-  if (!dialog) return
+    const cardVideo = cardVideoRef.current
+    const modalVideo = modalVideoRef.current
+    const resetVideo = (v) => { if (v) { v.pause(); v.currentTime = 0 } }
+    return () => {
+      resetVideo(cardVideo)
+      resetVideo(modalVideo)
+      setIsPlaying(false)
+      setShowPlayOverlay(true)
+    }
+  }, [])
 
-  const handleCancel = (e) => {
-    e.preventDefault() // stop instant close
-    closeModal()
-  }
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) document.body.classList.remove('video-fullscreen')
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
 
-  dialog.addEventListener('cancel', handleCancel)
-
-  return () => {
-    dialog.removeEventListener('cancel', handleCancel)
-  }
-}, [])
+  // --- Utility ---
 
   const getFileExtension = (path) => path.split('.').pop().toLowerCase()
-
-  const isImageFile = () =>
-    ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(getFileExtension(photo.path))
+  const isImageFile = () => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(getFileExtension(photo.path))
+  const isVideoFile = () => ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(getFileExtension(photo.path))
 
   const getContrastColor = (hexColor) => {
     if (!hexColor) return '#111'
@@ -56,6 +81,20 @@ useEffect(() => {
     const b = bigint & 255
     return (r * 299 + g * 587 + b * 114) / 1000 > 150 ? '#111' : '#fff'
   }
+
+  const getImageUrl = () => `${API}/${photo.id}/content`
+  const getFileName = () => photo.path.split('\\').pop() || photo.path.split('/').pop()
+
+  const formatDate = (dateStr) =>
+    new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })
+
+  const formatDateTime = (dateStr) =>
+    new Date(dateStr).toLocaleString(undefined, {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    })
+
+  // --- Handlers ---
 
   const handleClearPersonTag = async (personId, event) => {
     event.stopPropagation()
@@ -75,12 +114,10 @@ useEffect(() => {
     event.stopPropagation()
     if (!selectedPersonForAdd) return
     if (selectedPersonForAdd === 'other' && !customPersonLabel.trim()) return
-
     try {
       const body = selectedPersonForAdd === 'other'
         ? { person_name: customPersonLabel.trim() }
         : { person_id: Number(selectedPersonForAdd) }
-
       const response = await fetch(`${API}/${photo.id}/persons`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -98,39 +135,145 @@ useEffect(() => {
     }
   }
 
-  const getImageUrl = () => `${API}/${photo.id}/content`
-  const getFileName = () => photo.path.split('\\').pop() || photo.path.split('/').pop()
+  const handleCardVideoClick = (e) => {
+    e.stopPropagation()
+    if (cardVideoRef.current) {
+      cardVideoRef.current.paused
+        ? cardVideoRef.current.play().catch(console.error)
+        : cardVideoRef.current.pause()
+    }
+  }
 
   const openModal = () => {
     if (dialogRef.current) {
       dialogRef.current.showModal()
-      // Fetch persons when modal opens
-      setLoadingPersons(true)
-      fetch(`${API}/persons`)
-        .then(res => res.ok ? res.json() : [])
-        .then(data => setPersonsList(Array.isArray(data) ? data : []))
-        .catch(err => console.error('Error fetching persons:', err))
-        .finally(() => setLoadingPersons(false))
+      if (personsList.length === 0 && !loadingPersons) {
+        setLoadingPersons(true)
+        fetch(`${API}/persons`)
+          .then(res => res.ok ? res.json() : [])
+          .then(data => setPersonsList(Array.isArray(data) ? data : []))
+          .catch(console.error)
+          .finally(() => setLoadingPersons(false))
+      }
     }
   }
 
   const closeModal = () => {
     const dialog = dialogRef.current
     if (!dialog) return
-
-    // Add closing class → triggers CSS animation
+    if (modalVideoRef.current) {
+      modalVideoRef.current.pause()
+      modalVideoRef.current.currentTime = 0
+    }
     dialog.classList.add('closing')
-
-    // Wait for animation to finish BEFORE closing
     setTimeout(() => {
       dialog.classList.remove('closing')
       dialog.close()
-    }, 300) // must match CSS duration (0.35s ≈ 300ms)
-}
+    }, 280)
+  }
+
+  // --- Render ---
+
+  const renderCardMedia = () => {
+    if (isVideoFile()) {
+      if (videoError) {
+        return (
+          <div className="no-image-placeholder">
+            <span className="file-icon">🎬</span>
+            <span className="file-name">{getFileName()}</span>
+          </div>
+        )
+      }
+      return (
+        <div className={`video-container ${isPlaying ? 'playing' : ''}`} onClick={handleCardVideoClick}>
+          <video
+            ref={cardVideoRef}
+            src={getImageUrl()}
+            className="photo-image"
+            muted
+            playsInline
+            preload="metadata"
+            onError={() => setVideoError(true)}
+            onEnded={() => { setIsPlaying(false); setShowPlayOverlay(true); if (cardVideoRef.current) cardVideoRef.current.currentTime = 0 }}
+            onPlay={() => { setIsPlaying(true); setShowPlayOverlay(false) }}
+            onPause={() => { setIsPlaying(false); setShowPlayOverlay(true) }}
+          />
+          {showPlayOverlay && !isPlaying && (
+            <div className="video-play-overlay">
+              <div className="play-icon">▶</div>
+            </div>
+          )}
+        </div>
+      )
+    }
+    if (!imageError && isImageFile()) {
+      return (
+        <img
+          src={getImageUrl()}
+          alt={getFileName()}
+          onError={() => setImageError(true)}
+          className="photo-image"
+        />
+      )
+    }
+    return (
+      <div className="no-image-placeholder">
+        <span className="file-icon">🖼️</span>
+        <span className="file-name">{getFileName()}</span>
+      </div>
+    )
+  }
+
+  const renderModalMedia = () => {
+    if (isVideoFile()) {
+      if (videoError) {
+        return (
+          <div className="no-image-placeholder-large">
+            <span className="file-icon-large">🎬</span>
+            <p>Video cannot be played</p>
+            <p className="file-path">{photo.path}</p>
+          </div>
+        )
+      }
+      return (
+        <div className="modal-video-wrapper">
+          <video
+            ref={modalVideoRef}
+            src={getImageUrl()}
+            className="modal-image"
+            controls
+            preload="metadata"
+            onError={() => setVideoError(true)}
+            controlsList="nodownload"
+            playsInline
+          >
+            Your browser doesn't support video playback.
+          </video>
+        </div>
+      )
+    }
+    if (!imageError && isImageFile()) {
+      return (
+        <img
+          src={getImageUrl()}
+          alt={getFileName()}
+          onError={() => setImageError(true)}
+          className="modal-image"
+        />
+      )
+    }
+    return (
+      <div className="no-image-placeholder-large">
+        <span className="file-icon-large">🖼️</span>
+        <p>Could not load image</p>
+        <p className="file-path">{photo.path}</p>
+      </div>
+    )
+  }
 
   return (
     <>
-      {/* cardRef is attached here — PhotoGallery uses it to call scrollIntoView */}
+      {/* ── Card ── */}
       <div
         className="photo-card"
         ref={cardRef}
@@ -138,19 +281,7 @@ useEffect(() => {
         onClick={openModal}
       >
         <div className="photo-image-container">
-          {!imageError && isImageFile() ? (
-            <img
-              src={getImageUrl()}
-              alt={getFileName()}
-              onError={() => setImageError(true)}
-              className="photo-image"
-            />
-          ) : (
-            <div className="no-image-placeholder">
-              <span className="file-icon">🖼️</span>
-              <span className="file-name">{getFileName()}</span>
-            </div>
-          )}
+          {renderCardMedia()}
         </div>
 
         <div className="photo-info">
@@ -169,11 +300,7 @@ useEffect(() => {
                       key={`${photo.id}-${personId}-${idx}`}
                       className="detail-badge person label-with-remove"
                       onClick={(e) => e.stopPropagation()}
-                      style={{
-                        backgroundColor: color,
-                        color: getContrastColor(color),
-                        borderColor: color,
-                      }}
+                      style={{ backgroundColor: color, color: getContrastColor(color), borderColor: color }}
                     >
                       {name}
                       <button
@@ -188,98 +315,106 @@ useEffect(() => {
               </div>
             )}
           </div>
-          {photo.scenario && (
-            <p className="photo-description">{photo.scenario}</p>
-          )}
-          <p className="photo-date">{new Date(photo.created_at).toLocaleDateString()}</p>
+          {photo.scenario && <p className="photo-description">{photo.scenario}</p>}
+          <p className="photo-date">{formatDate(photo.created_at)}</p>
         </div>
       </div>
 
-      {/* Modal Dialog */}
+      {/* ── Modal ── */}
       <dialog ref={dialogRef} className="photo-modal">
-        <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="modal-close" onClick={closeModal}>✕</button>
-            <div className="modal-image-container">
-              {!imageError && isImageFile() ? (
-                <img
-                  src={getImageUrl()}
-                  alt={getFileName()}
-                  onError={() => setImageError(true)}
-                  className="modal-image"
-                />
-              ) : (
-                <div className="no-image-placeholder-large">
-                  <span className="file-icon-large">🖼️</span>
+        <div className="modal-inner" onClick={(e) => e.stopPropagation()}>
+
+          {/* Close button — floats above everything */}
+          <button className="modal-close" onClick={closeModal} aria-label="Close">✕</button>
+
+          {/* LEFT — Media */}
+          <div className="modal-image-container">
+            {renderModalMedia()}
+          </div>
+
+          {/* RIGHT — Info panel */}
+          <div className="modal-info">
+            <div className="modal-info-scroll">
+
+              {/* Header */}
+              <div className="modal-header">
+                <h2 className="modal-title">{getFileName()}</h2>
+                <p className="modal-subtitle">{photo.path}</p>
+              </div>
+
+              <div className="modal-divider" />
+
+              {/* Category */}
+              <div className="detail-item">
+                <span className="label">Category</span>
+                <span className="value">{photo.category || '—'}</span>
+              </div>
+
+              {/* Description */}
+              {photo.scenario && (
+                <div className="detail-item">
+                  <span className="label">Description</span>
+                  <span className="value">{photo.scenario}</span>
                 </div>
               )}
-            </div>
-            <div className="modal-info">
-              <h2>{getFileName()}</h2>
-              <p className="file-path">{photo.path}</p>
-              <div className="modal-details">
-                <div className="detail-item">
-                  <span className="label">Category:</span>
-                  <span className="value">{photo.category || 'Not tagged'}</span>
-                </div>
-                {photo.scenario && (
-                  <div className="detail-item">
-                    <span className="label">Description:</span>
-                    <span className="value">{photo.scenario}</span>
+
+              {/* People */}
+              <div className="detail-item">
+                <span className="label">People</span>
+                {photo.person_ids && photo.person_ids.length > 0 ? (
+                  <div className="modal-person-tags">
+                    {photo.person_ids.map((personId, idx) => {
+                      const name = photo.person_names?.[idx] || `Person ${personId}`
+                      const color = photo.person_colors?.[idx] || '#e8f5e9'
+                      return (
+                        <span
+                          key={`modal-${photo.id}-${personId}-${idx}`}
+                          className="modal-person-badge"
+                          style={{ backgroundColor: color, color: getContrastColor(color), borderColor: color }}
+                        >
+                          {name}
+                          <button
+                            type="button"
+                            className="modal-person-badge-remove"
+                            onClick={(e) => handleClearPersonTag(personId, e)}
+                            title={`Remove ${name}`}
+                          >✕</button>
+                        </span>
+                      )
+                    })}
                   </div>
+                ) : (
+                  <span className="value" style={{ opacity: 0.5 }}>No people tagged</span>
                 )}
-                <div className="detail-item">
-                  <span className="label">People:</span>
-                  {photo.person_ids && photo.person_ids.length > 0 ? (
-                    <div className="modal-person-tags">
-                      {photo.person_ids.map((personId, idx) => {
-                        const name = photo.person_names?.[idx] || `Person ${personId}`
-                        const color = photo.person_colors?.[idx] || '#e8f5e9'
-                        return (
-                          <span
-                            key={`modal-${photo.id}-${personId}-${idx}`}
-                            className="modal-person-badge"
-                            style={{
-                              backgroundColor: color,
-                              color: getContrastColor(color),
-                              borderColor: color,
-                            }}
-                          >
-                            {name}
-                            <button
-                              type="button"
-                              className="modal-person-badge-remove"
-                              onClick={(e) => handleClearPersonTag(personId, e)}
-                              title={`Remove ${name}`}
-                            >✕</button>
-                          </span>
-                        )
-                      })}
-                    </div>
-                  ) : (
-                    <span className="value">No faces detected</span>
-                  )}
-                </div>
-                <div className="detail-item">
-                  <span className="label">Add Label</span>
+              </div>
+
+              <div className="modal-divider" />
+
+              {/* Add label */}
+              <div className="detail-item">
+                <span className="label">Tag a person</span>
+                <div className="add-label-section">
                   <div className="add-label-row">
                     <select
                       value={selectedPersonForAdd}
                       onChange={e => setSelectedPersonForAdd(e.target.value)}
                     >
-                      <option value="">{loadingPersons ? 'Loading...' : 'Select a person'}</option>
+                      <option value="">{loadingPersons ? 'Loading…' : 'Select person'}</option>
                       {personsList.map(p => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
-                      <option value="other">Other...</option>
+                      <option value="other">Other…</option>
                     </select>
+
                     {selectedPersonForAdd === 'other' && (
                       <input
                         type="text"
                         value={customPersonLabel}
                         onChange={e => setCustomPersonLabel(e.target.value)}
-                        placeholder="Type name..."
+                        placeholder="Enter name…"
                       />
                     )}
+
                     <button
                       type="button"
                       onClick={addLabelFromDropdown}
@@ -289,17 +424,21 @@ useEffect(() => {
                         (selectedPersonForAdd === 'other' && !customPersonLabel.trim())
                       }
                     >
-                      Add Label
+                      Add Tag
                     </button>
                   </div>
                 </div>
-                <div className="detail-item">
-                  <span className="label">Added:</span>
-                  <span className="value">{new Date(photo.created_at).toLocaleString()}</span>
-                </div>
               </div>
+
+            </div>
+
+            {/* Footer */}
+            <div className="modal-footer">
+              <span className="modal-date">Added {formatDateTime(photo.created_at)}</span>
             </div>
           </div>
+
+        </div>
       </dialog>
     </>
   )

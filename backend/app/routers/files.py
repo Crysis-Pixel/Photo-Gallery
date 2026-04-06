@@ -1,10 +1,13 @@
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from app import crud, schemas
 from app.database import SessionLocal
+from app.models import File  # ← IMPORT THIS
 from fastapi.responses import FileResponse
 import os
+import mimetypes
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
@@ -72,6 +75,7 @@ def rescan_folder(
     force: bool = Query(default=True),
     db: Session = Depends(get_db),
 ):
+    """Full rescan: re-tag every file in all configured folders (force=True by default)."""
     if folder_path:
         resolved = crud.resolve_folder_path(folder_path)
         if not os.path.isdir(resolved):
@@ -95,11 +99,34 @@ def rescan_folder(
         totals["total_files"] += r["total_files"]
         totals["tagged_files"] += r["tagged_files"]
         totals["skipped_files"] += r["skipped_files"]
-
+    crud.cleanup_orphaned_persons(db)
     return {
         "message": "Folder scan completed",
         "folders": targets,
         **totals,
+    }
+
+
+@router.post("/recheck")
+def recheck_missing(db: Session = Depends(get_db)):
+    """
+    Smart recheck: new files + incomplete records only.
+    """
+    folder_configs = crud.get_scan_folders(db)
+    valid = [fc for fc in folder_configs if fc.path and os.path.isdir(fc.path)]
+    if not valid:
+        raise HTTPException(
+            status_code=400,
+            detail="No folders configured. Add a folder first."
+        )
+
+    results = crud.recheck_and_tag_missing(db)
+    crud.cleanup_orphaned_persons(db)
+    return {
+        "message": "Recheck completed successfully",
+        "new_files": results["new_files"],
+        "retagged_files": results["retagged_files"],
+        "errors": results["errors"],
     }
 
 
@@ -120,17 +147,43 @@ def add_folder_config(folder: schemas.FolderConfigCreate, db: Session = Depends(
     if not os.path.isdir(folder_path):
         raise HTTPException(status_code=400, detail=f"Folder path does not exist: {folder_path}")
 
+    # Check if folder already exists
+    existing = crud.get_scan_folders(db)
+    for f in existing:
+        if os.path.normpath(f.path) == os.path.normpath(folder_path):
+            raise HTTPException(status_code=400, detail="Folder already added")
+
     folder_config = crud.add_scan_folder(db, folder_path)
-    crud.scan_and_tag_folder(db, folder_path)
+    
+    # Run scan in a background thread to avoid timeout
+    import threading
+    def scan_in_background():
+        from app.database import SessionLocal
+        bg_db = SessionLocal()
+        try:
+            crud.scan_and_tag_folder(bg_db, folder_path)
+            bg_db.commit()
+        except Exception as e:
+            print(f"Background scan error: {e}")
+            bg_db.rollback()
+        finally:
+            bg_db.close()
+    
+    thread = threading.Thread(target=scan_in_background)
+    thread.daemon = True
+    thread.start()
+    
     return folder_config
 
 
-@router.delete("/folder/{folder_id}", response_model=schemas.FolderConfigResponse)
-def remove_folder_config(folder_id: int, db: Session = Depends(get_db)):
-    folder_config = crud.delete_scan_folder(db, folder_id)
-    if not folder_config:
-        raise HTTPException(status_code=404, detail="Folder not found")
-    return folder_config
+@router.delete("/folder/{id}")
+def delete_folder(id: int, db: Session = Depends(get_db)):
+    success = crud.delete_scan_folder(db, id)
+
+    if not success:
+        return {"success": False, "message": "Delete failed"}
+
+    return {"success": True}
 
 
 # ── File-level person tag endpoints ───────────────────────────────────────────
@@ -179,7 +232,6 @@ def list_all_files_debug(db: Session = Depends(get_db)):
 
 @router.get("/", response_model=List[schemas.FileResponse])
 def list_files(db: Session = Depends(get_db)):
-    # Query ALL configured folders — not just the first one.
     folder_configs = crud.get_scan_folders(db)
     valid_folders = [fc.path for fc in folder_configs if fc.path and os.path.isdir(fc.path)]
 
@@ -196,9 +248,96 @@ def list_files(db: Session = Depends(get_db)):
 
 @router.get("/{file_id}/content")
 def get_file_content(file_id: int, db: Session = Depends(get_db)):
-    db_file = crud.get_file_by_id(db, file_id)
-    if not db_file:
+    """Serve file content with proper MIME types for video streaming"""
+    
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file:
         raise HTTPException(status_code=404, detail="File not found")
-    if not os.path.exists(db_file.path):
-        raise HTTPException(status_code=404, detail="File missing on disk")
-    return FileResponse(db_file.path, filename=os.path.basename(db_file.path))
+    
+    if not os.path.exists(file.path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    
+    # Set proper MIME type based on file extension
+    ext = os.path.splitext(file.path)[1].lower()
+    media_type_map = {
+        '.mp4': 'video/mp4',
+        '.mov': 'video/quicktime', 
+        '.avi': 'video/x-msvideo',
+        '.mkv': 'video/x-matroska',
+        '.webm': 'video/webm',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+        '.webp': 'image/webp'
+    }
+    
+    media_type = media_type_map.get(ext, 'application/octet-stream')
+    
+    # Return with appropriate headers for video streaming
+    return FileResponse(
+        file.path, 
+        media_type=media_type,
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "no-cache",
+            "Content-Disposition": f"inline; filename*=UTF-8''{os.path.basename(file.path)}"
+        }
+    )
+
+@router.get("/{file_id}/stream")
+async def stream_video(file_id: int, request: Request, db: Session = Depends(get_db)):
+    """Stream video with range support for seeking"""
+    
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    if not os.path.exists(file.path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    
+    file_size = os.path.getsize(file.path)
+    
+    # Get range header
+    range_header = request.headers.get('range')
+    
+    if not range_header:
+        # Return full file if no range requested
+        return FileResponse(file.path, media_type='video/mp4')
+    
+    # Parse range header
+    try:
+        range_match = range_header.replace('bytes=', '').split('-')
+        start = int(range_match[0])
+        end = int(range_match[1]) if range_match[1] else file_size - 1
+    except (ValueError, IndexError):
+        start = 0
+        end = file_size - 1
+    
+    # Validate range
+    start = max(0, start)
+    end = min(file_size - 1, end)
+    
+    if start > end:
+        raise HTTPException(status_code=416, detail="Requested Range Not Satisfiable")
+    
+    chunk_size = end - start + 1
+    
+    # Read the requested chunk
+    with open(file.path, 'rb') as f:
+        f.seek(start)
+        data = f.read(chunk_size)
+    
+    # Return partial content
+    return StreamingResponse(
+        iter([data]),
+        status_code=206,
+        media_type='video/mp4',
+        headers={
+            'Content-Range': f'bytes {start}-{end}/{file_size}',
+            'Accept-Ranges': 'bytes',
+            'Content-Length': str(chunk_size),
+            'Content-Disposition': f'inline; filename="{os.path.basename(file.path)}"'
+        }
+    )

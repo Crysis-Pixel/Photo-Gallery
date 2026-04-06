@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import '../styles/PersonManager.css'
 
 const API = 'http://localhost:8000/files'
 
-export default function PersonManager({ onPersonsChange, onPhotoClick }) {
+export default function PersonManager({ onPersonsChange, onPhotoClick, refreshKey }) {
   const [persons, setPersons] = useState([])
-  const [photos, setPhotos] = useState({})          // { personId: [photo, …] }
+  const [photos, setPhotos] = useState({})          
   const [editingId, setEditingId] = useState(null)
   const [editName, setEditName] = useState('')
   const [mergeSource, setMergeSource] = useState(null)
@@ -25,7 +25,7 @@ export default function PersonManager({ onPersonsChange, onPhotoClick }) {
   const MOMENTUM_MULTIPLIER = 4
   const [isClosingModal, setIsClosingModal] = useState(false)
 
-  useEffect(() => { fetchPersons() }, [])
+  useEffect(() => { fetchPersons() }, [refreshKey])
   useEffect(() => { if (editingId && inputRef.current) inputRef.current.focus() }, [editingId])
 
   const fetchPersons = async () => {
@@ -33,10 +33,14 @@ export default function PersonManager({ onPersonsChange, onPhotoClick }) {
       const res = await fetch(`${API}/persons`)
       if (res.ok) {
         const data = await res.json()
-        setPersons(data)
-        onPersonsChange?.(data)
+        setPersons(data || [])
+        onPersonsChange?.(data || [])
       }
-    } catch (e) { console.error(e) }
+    } catch (e) {
+      console.error(e)
+      setPersons([])
+      onPersonsChange?.([])
+    }
   }
 
   const fetchPhotos = async (personId, expand = true) => {
@@ -53,8 +57,11 @@ export default function PersonManager({ onPersonsChange, onPhotoClick }) {
         loadedThumbnailsRef.current.add(personId)
         if (expand) setExpandedId(personId)
       }
-    } catch (e) { console.error(e) }
-    finally { setLoadingPhotos(p => ({ ...p, [personId]: false })) }
+    } catch (e) { 
+      console.error(e) 
+    } finally { 
+      setLoadingPhotos(p => ({ ...p, [personId]: false })) 
+    }
   }
 
   const saveName = async (id) => {
@@ -292,7 +299,6 @@ const cancelDeletePerson = () => {
   return (
     <section className="pm-root">
       <div className="pm-header">
-        <h2 className="pm-title">People</h2>
         {mergeSource && (
           <div className="pm-merge-banner">
             <span>
@@ -327,7 +333,6 @@ const cancelDeletePerson = () => {
               key={person.id}
               className={`pm-card ${isSource ? 'pm-card--source' : ''} ${mergeSource && !isSource ? 'pm-card--merge-target' : ''}`}
             >
-              {/* Remove button - top right corner */}
               <button
                 className="pm-card-remove-btn"
                 onClick={() => removePerson(person.id)}
@@ -336,15 +341,18 @@ const cancelDeletePerson = () => {
                 ✕
               </button>
 
-              {/* Avatar */}
               <div className="pm-avatar">
-                {personPhotos[0]
-                  ? <img src={`${API}/${personPhotos[0].id}/content`} alt={person.name} className="pm-avatar-img" />
-                  : <span className="pm-avatar-icon">👤</span>
-                }
+                {personPhotos[0] ? (
+                  <img 
+                    src={`${API}/${personPhotos[0].id}/content`} 
+                    alt={person.name} 
+                    className="pm-avatar-img" 
+                  />
+                ) : (
+                  <span className="pm-avatar-icon">👤</span>
+                )}
               </div>
 
-              {/* Name / edit */}
               {editingId === person.id ? (
                 <div className="pm-edit">
                   <input
@@ -373,7 +381,6 @@ const cancelDeletePerson = () => {
                 </div>
               )}
 
-              {/* Action row */}
               <div className="pm-actions">
                 <button
                   className="pm-btn pm-btn-sm"
@@ -394,34 +401,30 @@ const cancelDeletePerson = () => {
                 ) : null}
               </div>
 
-              {/* Inline photo strip */}
               {isExpanded && (
                 <div className="pm-strip">
-                  {personPhotos.length === 0
-                    ? <span className="pm-strip-empty">No photos found</span>
-                    : personPhotos.slice(0, 8).map(photo => (
-                        <img
-                          key={photo.id}
-                          src={`${API}/${photo.id}/content`}
-                          alt=""
-                          className="pm-strip-thumb pm-strip-thumb--clickable"
-                          title={photo.path.split(/[\\/]/).pop()}
-                          onClick={() => {
-                            console.log('Thumbnail clicked, photoId:', photo.id)
+                  {personPhotos.length === 0 ? (
+                    <span className="pm-strip-empty">No photos found</span>
+                  ) : (
+                    personPhotos.slice(0, 8).map(photo => (
+                      <img
+                        key={photo.id}
+                        src={`${API}/${photo.id}/content`}
+                        alt=""
+                        className="pm-strip-thumb pm-strip-thumb--clickable"
+                        title={photo.path.split(/[\\/]/).pop()}
+                        onClick={() => onPhotoClick?.(photo.id)}
+                        role="button"
+                        tabIndex="0"
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
                             onPhotoClick?.(photo.id)
-                          }}
-                          role="button"
-                          tabIndex="0"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' || e.key === ' ') {
-                              e.preventDefault()
-                              console.log('Thumbnail key pressed, photoId:', photo.id)
-                              onPhotoClick?.(photo.id)
-                            }
-                          }}
-                        />
-                      ))
-                  }
+                          }
+                        }}
+                      />
+                    ))
+                  )}
                   {personPhotos.length > 8 && (
                     <span className="pm-strip-more">+{personPhotos.length - 8} more</span>
                   )}

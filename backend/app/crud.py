@@ -216,59 +216,98 @@ def _create_new_person(db: Session, emb) -> Optional[Person]:
 
 # ── Auto-tagging ───────────────────────────────────────────────────────────────
 
-def auto_tag_file(db: Session, db_file: File):
+def auto_tag_file(
+    db: Session,
+    db_file: File,
+    tag_category=True,
+    tag_scenario=True,
+    tag_faces=True
+):
+    """Auto-tag a file - skip processing for videos"""
     file_path = db_file.path
     if not os.path.exists(file_path):
         return db_file
 
+    # Skip AI processing for video files
+    if db_file.file_type == "video":
+        # Just set basic video info if missing
+        if tag_category and not db_file.category:
+            db_file.category = "video"
+        if tag_scenario and not db_file.scenario:
+            db_file.scenario = f"Video: {os.path.basename(file_path)}"
+        db.commit()
+        db.refresh(db_file)
+        return db_file
+
+    # Rest of the existing image processing code...
     try:
         image = Image.open(file_path).convert("RGB")
 
-        # ── CLIP category ──
-        category_labels = [
-            "personal photo", "anime", "document", "screenshot", "object",
-            "celebrity", "car", "video game", "nature", "portrait", "food", "work"
-        ]
-        category_tokens = clip.tokenize(category_labels).to(device)
-        with torch.no_grad():
-            image_features = model.encode_image(preprocess(image).unsqueeze(0).to(device))
-            category_features = model.encode_text(category_tokens)
-            category_logits = (image_features @ category_features.T).softmax(dim=-1)
-            best_category_idx = category_logits[0].argmax().item()
-            db_file.category = category_labels[best_category_idx]
+        # ───────────── CATEGORY ─────────────
+        if tag_category:
+            try:
+                category_labels = [
+                    "personal photo", "anime", "document", "screenshot", "object",
+                    "celebrity", "car", "video game", "nature", "portrait", "food", "work"
+                ]
+                category_tokens = clip.tokenize(category_labels).to(device)
 
-        # ── BLIP description ──
-        description = get_image_description(image)
-        if description:
-            db_file.scenario = sanitize_description(description)
+                with torch.no_grad():
+                    image_features = model.encode_image(
+                        preprocess(image).unsqueeze(0).to(device)
+                    )
+                    category_features = model.encode_text(category_tokens)
+                    category_logits = (image_features @ category_features.T).softmax(dim=-1)
+                    best_category_idx = category_logits[0].argmax().item()
 
-        # ── Face detection / recognition ──
-        try:
-            SIM_THRESHOLD = 0.65
-            MIN_FACE_RATIO = 0.07
+                db_file.category = category_labels[best_category_idx]
 
-            db.query(Face).filter(Face.file_id == db_file.id).delete(synchronize_session=False)
+            except Exception as e:
+                print(f"[category error] {file_path}: {e}")
 
-            if INSIGHTFACE_AVAILABLE:
-                _tag_faces_insightface(db, db_file, image, np, SIM_THRESHOLD, MIN_FACE_RATIO)
-            elif FACENET_AVAILABLE:
-                _tag_faces_facenet(db, db_file, image, np, SIM_THRESHOLD)
-            else:
-                _tag_faces_mediapipe(db, db_file, image, np)
+        # ───────────── SCENARIO ─────────────
+        if tag_scenario:
+            try:
+                description = get_image_description(image)
+                if description:
+                    db_file.scenario = sanitize_description(description)
+            except Exception as e:
+                print(f"[scenario error] {file_path}: {e}")
 
-        except Exception as face_e:
-            print(f"Face detection skipped for {file_path}: {face_e}")
-            _safe_rollback(db)
-            db_file.person_name = None
+        # ───────────── FACES ─────────────
+        if tag_faces:
+            try:
+                SIM_THRESHOLD = 0.65
+                MIN_FACE_RATIO = 0.07
 
-        try:
-            db.commit()
-            db.refresh(db_file)
-        except Exception:
-            _safe_rollback(db)
+                # Clear existing faces if re-detecting
+                db.query(Face).filter(
+                    Face.file_id == db_file.id
+                ).delete(synchronize_session=False)
+
+                if INSIGHTFACE_AVAILABLE:
+                    _tag_faces_insightface(
+                        db, db_file, image, np, SIM_THRESHOLD, MIN_FACE_RATIO
+                    )
+                elif FACENET_AVAILABLE:
+                    _tag_faces_facenet(
+                        db, db_file, image, np, SIM_THRESHOLD
+                    )
+                else:
+                    _tag_faces_mediapipe(
+                        db, db_file, image, np
+                    )
+
+            except Exception as face_e:
+                print(f"[face error] {file_path}: {face_e}")
+                db_file.person_name = None
+
+        # ───────────── SAVE ─────────────
+        db.commit()
+        db.refresh(db_file)
 
     except Exception as e:
-        print(f"Error auto-tagging file {file_path}: {e}")
+        print(f"[auto_tag ERROR] {file_path}: {e}")
         _safe_rollback(db)
 
     return db_file
@@ -345,6 +384,8 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
         if used_person_ids:
             first_person = db.query(Person).filter(Person.id == used_person_ids[0]).first()
             db_file.person_name = first_person.name if first_person else None
+
+            db.commit()
         else:
             db_file.person_name = None
 
@@ -407,6 +448,8 @@ def _tag_faces_facenet(db: Session, db_file: File, image, np, SIM_THRESHOLD: flo
         if used_person_ids:
             first_person = db.query(Person).filter(Person.id == used_person_ids[0]).first()
             db_file.person_name = first_person.name if first_person else None
+
+            db.commit()
         else:
             db_file.person_name = None
 
@@ -552,7 +595,7 @@ def get_person_photos(db: Session, person_id: int):
 # ── Folder / scan ──────────────────────────────────────────────────────────────
 
 def get_scan_folder(db: Session):
-    """Return the first (oldest) configured folder. Kept for backwards compat."""
+    """Return the first configured folder (legacy)."""
     return db.query(FolderConfig).order_by(FolderConfig.id).first()
 
 
@@ -562,24 +605,61 @@ def get_scan_folders(db: Session):
 
 
 def add_scan_folder(db: Session, folder_path: str):
+    """Add a new folder. Does NOT replace existing ones."""
     folder_path = resolve_folder_path(folder_path)
-    folder_config = db.query(FolderConfig).filter(FolderConfig.path == folder_path).first()
-    if folder_config:
-        return folder_config
-    folder_config = FolderConfig(path=folder_path)
-    db.add(folder_config)
+
+    # Check if this exact path already exists
+    existing = db.query(FolderConfig).filter(FolderConfig.path == folder_path).first()
+    if existing:
+        return existing  # already exists, return it
+
+    # Create new folder config
+    new_folder = FolderConfig(path=folder_path)
+    db.add(new_folder)
     db.commit()
-    db.refresh(folder_config)
-    return folder_config
+    db.refresh(new_folder)
+    return new_folder
 
 
 def delete_scan_folder(db: Session, folder_id: int):
-    folder_config = db.query(FolderConfig).filter(FolderConfig.id == folder_id).first()
-    if not folder_config:
-        return None
-    db.delete(folder_config)
-    db.commit()
-    return folder_config
+    folder = db.query(FolderConfig).filter(FolderConfig.id == folder_id).first()
+    if not folder:
+        return False
+
+    folder_path = os.path.normpath(folder.path).lower() + os.sep
+
+    try:
+        all_files = db.query(File).all()
+
+        files_to_delete = [
+            f for f in all_files
+            if os.path.normpath(f.path).lower().startswith(folder_path)
+        ]
+
+        file_ids = [f.id for f in files_to_delete]
+
+        print(f"[delete_folder] deleting {len(file_ids)} files")
+
+        if file_ids:
+            db.query(Face).filter(Face.file_id.in_(file_ids)).delete(synchronize_session=False)
+            db.query(File).filter(File.id.in_(file_ids)).delete(synchronize_session=False)
+
+        db.delete(folder)
+
+        db.commit()
+
+        # ✅ SAFE cleanup (separate transaction)
+        try:
+            cleanup_orphaned_persons(db)
+        except Exception as e:
+            print("cleanup warning:", e)
+
+        return True
+
+    except Exception as e:
+        print("[delete_folder ERROR]:", e)
+        db.rollback()
+        return False   # ✅ NEVER crash
 
 
 def set_scan_folder(db: Session, folder_path: str):
@@ -734,47 +814,49 @@ def get_files(db: Session, folder_paths: Optional[List[str]] = None,
 
 def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
     """
-    Scan a folder for images and auto-tag each one.
-
-    Each file is processed in its own fresh DB session so that a failure on
-    one image cannot poison the transaction for subsequent images.
+    Scan a folder for images and videos, auto-tag each one.
+    This function uses the provided db session, not creating its own.
     """
     from app.database import SessionLocal
 
     folder_path = resolve_folder_path(folder_path)
-    supported_formats = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+    supported_formats = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
     results = {"total_files": 0, "tagged_files": 0, "skipped_files": 0}
 
     if not os.path.isdir(folder_path):
         return results
 
-    image_paths = []
+    file_paths = []
     for root, _, files in os.walk(folder_path):
         for filename in files:
             if os.path.splitext(filename)[1].lower() in supported_formats:
-                image_paths.append(os.path.join(root, filename))
+                file_paths.append(os.path.join(root, filename))
 
-    for file_path in image_paths:
+    for file_path in file_paths:
         results["total_files"] += 1
+        ext = os.path.splitext(file_path)[1].lower()
+        file_type = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
 
-        file_db = SessionLocal()
         try:
-            existing_file = file_db.query(File).filter(File.path == file_path).first()
+            existing_file = db.query(File).filter(File.path == file_path).first()
 
             if existing_file:
                 if not force and existing_file.category and existing_file.scenario:
                     results["skipped_files"] += 1
                     continue
                 db_file = existing_file
+                # Update file_type if it was incorrectly set
+                if db_file.file_type != file_type:
+                    db_file.file_type = file_type
             else:
-                db_file = File(path=file_path, file_type="photo")
-                file_db.add(db_file)
+                db_file = File(path=file_path, file_type=file_type)
+                db.add(db_file)
                 try:
-                    file_db.commit()
-                    file_db.refresh(db_file)
+                    db.commit()
+                    db.refresh(db_file)
                 except IntegrityError:
-                    file_db.rollback()
-                    db_file = file_db.query(File).filter(File.path == file_path).first()
+                    db.rollback()
+                    db_file = db.query(File).filter(File.path == file_path).first()
                     if db_file is None:
                         results["skipped_files"] += 1
                         continue
@@ -783,21 +865,178 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
                 db_file.category = None
                 db_file.scenario = None
                 db_file.person_name = None
-                file_db.add(db_file)
+                db.add(db_file)
                 try:
-                    file_db.commit()
-                    file_db.refresh(db_file)
+                    db.commit()
+                    db.refresh(db_file)
                 except Exception:
-                    file_db.rollback()
+                    db.rollback()
 
-            auto_tag_file(file_db, db_file)
+            # Process based on file type
+            if file_type == "photo":
+                auto_tag_file(db, db_file)
+            else:
+                # For videos, just set basic info without AI processing
+                if not db_file.category or force:
+                    db_file.category = "video"
+                if not db_file.scenario or force:
+                    db_file.scenario = f"Video file: {os.path.basename(file_path)}"
+                db.add(db_file)
+                db.commit()
+            
             results["tagged_files"] += 1
 
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
-            _safe_rollback(file_db)
+            db.rollback()
             results["skipped_files"] += 1
+
+    return results
+
+def recheck_and_tag_missing(db: Session) -> dict:
+    """
+    Smart incremental recheck:
+    - Adds new files
+    - ONLY fills missing fields (no overwriting)
+    - Accurate counters
+    """
+
+    from app.database import SessionLocal
+
+    supported_formats = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+
+    results = {
+        "new_files": 0,
+        "retagged_files": 0,
+        "skipped_files": 0,
+        "errors": 0,
+    }
+
+    folder_configs = get_scan_folders(db)
+    valid_folders = [fc.path for fc in folder_configs if fc.path and os.path.isdir(fc.path)]
+
+    if not valid_folders:
+        return results
+
+    # PASS 1: ADD NEW FILES
+    for folder_path in valid_folders:
+        for root, _, files_in_dir in os.walk(folder_path):
+            for filename in files_in_dir:
+                if os.path.splitext(filename)[1].lower() not in supported_formats:
+                    continue
+
+                file_path = os.path.join(root, filename)
+                ext = os.path.splitext(file_path)[1].lower()
+                file_type = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
+
+                file_db = SessionLocal()
+                try:
+                    existing = file_db.query(File).filter(File.path == file_path).first()
+                    if existing:
+                        continue
+
+                    # New file
+                    db_file = File(path=file_path, file_type=file_type)
+                    file_db.add(db_file)
+
+                    try:
+                        file_db.commit()
+                        file_db.refresh(db_file)
+                    except IntegrityError:
+                        file_db.rollback()
+                        continue
+
+                    # Full tagging for new files (only images get full processing)
+                    if file_type == "photo":
+                        auto_tag_file(file_db, db_file)
+                    else:
+                        # For videos, set basic info
+                        if not db_file.category:
+                            db_file.category = "video"
+                        if not db_file.scenario:
+                            db_file.scenario = f"Video file: {os.path.basename(file_path)}"
+                        file_db.add(db_file)
+                        file_db.commit()
+
+                    results["new_files"] += 1
+
+                except Exception as e:
+                    print(f"[recheck:new] Error: {file_path} → {e}")
+                    _safe_rollback(file_db)
+                    results["errors"] += 1
+                finally:
+                    file_db.close()
+
+    # PASS 2: UPDATE ONLY MISSING DATA (skip videos for face detection)
+    all_files = db.query(File).order_by(File.path).all()
+
+    for f in all_files:
+        if not os.path.exists(f.path):
+            continue
+
+        # Skip face detection for videos
+        if f.file_type == "video":
+            results["skipped_files"] += 1
+            continue
+
+        # Check what is missing
+        has_faces = db.query(Face).filter(Face.file_id == f.id).first() is not None
+
+        needs_category = not f.category
+        needs_scenario = not f.scenario
+        needs_faces = not has_faces
+
+        # Skip fully tagged files
+        if not (needs_category or needs_scenario or needs_faces):
+            results["skipped_files"] += 1
+            continue
+
+        file_db = SessionLocal()
+        try:
+            db_file = file_db.query(File).filter(File.id == f.id).first()
+            if db_file is None:
+                continue
+
+            # Partial tagging ONLY where needed
+            auto_tag_file(
+                file_db,
+                db_file,
+                tag_category=needs_category,
+                tag_scenario=needs_scenario,
+                tag_faces=needs_faces
+            )
+
+            results["retagged_files"] += 1
+
+        except Exception as e:
+            print(f"[recheck:update] Error: {f.path} → {e}")
+            _safe_rollback(file_db)
+            results["errors"] += 1
         finally:
             file_db.close()
 
     return results
+
+def cleanup_orphaned_persons(db: Session):
+    """Remove persons who no longer have any files left."""
+    # Get all persons who still have at least one Face
+    persons_with_faces = db.query(Person.id).join(Face).distinct().all()
+    active_person_ids = {p[0] for p in persons_with_faces}
+
+    # Find orphaned persons
+    all_persons = db.query(Person.id).all()
+    orphaned_ids = {p[0] for p in all_persons} - active_person_ids
+
+    if not orphaned_ids:
+        return 0
+
+    print(f"[cleanup] Removing {len(orphaned_ids)} orphaned persons")
+
+    # Delete faces first (required to avoid FK violation)
+    db.query(Face).filter(Face.person_id.in_(orphaned_ids)).delete(synchronize_session=False)
+
+    # Delete persons
+    db.query(Person).filter(Person.id.in_(orphaned_ids)).delete(synchronize_session=False)
+
+    db.commit()
+    return len(orphaned_ids)
