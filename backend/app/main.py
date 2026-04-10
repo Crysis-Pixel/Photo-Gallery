@@ -53,6 +53,15 @@ async def lifespan(app: FastAPI):
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE persons ADD COLUMN color STRING"))
 
+    if "faces" in inspector.get_table_names():
+        existing_columns = {col["name"] for col in inspector.get_columns("faces")}
+        if "box_left" not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE faces ADD COLUMN box_left FLOAT"))
+                conn.execute(text("ALTER TABLE faces ADD COLUMN box_top FLOAT"))
+                conn.execute(text("ALTER TABLE faces ADD COLUMN box_width FLOAT"))
+                conn.execute(text("ALTER TABLE faces ADD COLUMN box_height FLOAT"))
+
     try:
         scan_folder_task()
     except Exception as e:

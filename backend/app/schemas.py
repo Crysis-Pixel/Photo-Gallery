@@ -41,12 +41,25 @@ class FilePersonAdd(BaseModel):
     person_id: Optional[int] = None
     person_name: Optional[str] = None
 
+class FaceResponse(BaseModel):
+    id: int
+    person_id: Optional[int] = None
+    person_name: Optional[str] = None
+    person_color: Optional[str] = None
+    box_left: Optional[float] = None
+    box_top: Optional[float] = None
+    box_width: Optional[float] = None
+    box_height: Optional[float] = None
+
+_apply_orm_mode(FaceResponse)
+
 class FileResponse(FileBase):
     id: int
     created_at: datetime
     person_ids: List[int] = []
     person_names: List[str] = []
     person_colors: List[Optional[str]] = []
+    faces: List[FaceResponse] = []
 
 _apply_orm_mode(FileResponse)
 

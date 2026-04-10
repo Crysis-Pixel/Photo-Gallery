@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -74,10 +74,25 @@ class Face(Base):
     id = Column(Integer, primary_key=True, index=True)
     file_id = Column(Integer, ForeignKey("files.id"), index=True)
     person_id = Column(Integer, ForeignKey("persons.id"), index=True)
+    
+    # Bounding box coordinates stored as relative percentages [0.0 - 1.0]
+    box_left = Column(Float, nullable=True)
+    box_top = Column(Float, nullable=True)
+    box_width = Column(Float, nullable=True)
+    box_height = Column(Float, nullable=True)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
 
     file = relationship("File", back_populates="faces")
     person = relationship("Person", back_populates="faces")
+
+    @property
+    def person_name(self):
+        return self.person.name if self.person else None
+
+    @property
+    def person_color(self):
+        return self.person.color if self.person else None
 
 
 class FolderConfig(Base):

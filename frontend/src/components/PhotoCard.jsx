@@ -3,7 +3,7 @@ import '../styles/PhotoCard.css'
 
 const API = 'http://localhost:8000/files'
 
-function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
+function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
   const [imageError, setImageError] = useState(false)
   const [videoError, setVideoError] = useState(false)
 
@@ -12,6 +12,9 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
   const [loadingPersons, setLoadingPersons] = useState(false)
   const [selectedPersonForAdd, setSelectedPersonForAdd] = useState('')
   const [customPersonLabel, setCustomPersonLabel] = useState('')
+  const [selectedFace, setSelectedFace] = useState(null)
+  const [imgAspectRatio, setImgAspectRatio] = useState('auto')
+  const [isRescanning, setIsRescanning] = useState(false)
 
   // Video Playback State
   const [isPlaying, setIsPlaying] = useState(false)
@@ -104,7 +107,8 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
         const err = await response.json().catch(() => null)
         throw new Error(err?.detail || 'Unable to clear person tag')
       }
-      onPersonTagCleared?.()
+      const updatedPhoto = await response.json()
+      onPhotoUpdated?.(updatedPhoto)
     } catch (err) {
       console.error('Error clearing person tag:', err)
     }
@@ -118,20 +122,50 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
       const body = selectedPersonForAdd === 'other'
         ? { person_name: customPersonLabel.trim() }
         : { person_id: Number(selectedPersonForAdd) }
-      const response = await fetch(`${API}/${photo.id}/persons`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      })
+      let response;
+      if (selectedFace) {
+        response = await fetch(`${API}/faces/${selectedFace.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      } else {
+        response = await fetch(`${API}/${photo.id}/persons`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      }
       if (!response.ok) {
         const err = await response.json().catch(() => null)
         throw new Error(err?.detail || 'Unable to add label')
       }
+      const updatedPhoto = await response.json()
       setSelectedPersonForAdd('')
       setCustomPersonLabel('')
-      onPersonTagCleared?.()
+      setSelectedFace(null)
+      onPhotoUpdated?.(updatedPhoto)
     } catch (err) {
       console.error('Error adding label:', err)
+    }
+  }
+
+  const handleRescan = async (event) => {
+    event.stopPropagation()
+    setIsRescanning(true)
+    try {
+      const response = await fetch(`${API}/${photo.id}/rescan`, {
+        method: 'POST',
+      })
+      if (!response.ok) {
+        throw new Error('Rescan failed')
+      }
+      const updatedPhoto = await response.json()
+      onPhotoUpdated?.(updatedPhoto)
+    } catch (err) {
+      console.error('Error rescanning:', err)
+    } finally {
+      setIsRescanning(false)
     }
   }
 
@@ -165,6 +199,7 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
       modalVideoRef.current.pause()
       modalVideoRef.current.currentTime = 0
     }
+    setSelectedFace(null)
     dialog.classList.add('closing')
     setTimeout(() => {
       dialog.classList.remove('closing')
@@ -254,12 +289,44 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
     }
     if (!imageError && isImageFile()) {
       return (
-        <img
-          src={getImageUrl()}
-          alt={getFileName()}
-          onError={() => setImageError(true)}
-          className="modal-image"
-        />
+        <div className="modal-image-wrapper" style={{ aspectRatio: imgAspectRatio }}>
+          <img
+            src={getImageUrl()}
+            alt={getFileName()}
+            onLoad={(e) => {
+              const { naturalWidth, naturalHeight } = e.target;
+              if (naturalWidth && naturalHeight) {
+                setImgAspectRatio(`${naturalWidth} / ${naturalHeight}`);
+              }
+            }}
+            onError={() => setImageError(true)}
+            className="modal-image"
+          />
+          {photo.faces && photo.faces.map(face => {
+            if (face.box_left == null) return null;
+            return (
+              <div
+                key={face.id}
+                className={`face-box ${selectedFace?.id === face.id ? 'active' : ''}`}
+                style={{
+                  left: `${face.box_left * 100}%`,
+                  top: `${face.box_top * 100}%`,
+                  width: `${face.box_width * 100}%`,
+                  height: `${face.box_height * 100}%`,
+                  borderColor: face.person_color || '#e8f5e9'
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedFace(selectedFace?.id === face.id ? null : face);
+                }}
+              >
+                <span className="face-box-label" style={{ backgroundColor: face.person_color || '#e8f5e9', color: getContrastColor(face.person_color || '#e8f5e9') }}>
+                  {face.person_name || `Person ${face.person_id}`}
+                </span>
+              </div>
+            )
+          })}
+        </div>
       )
     }
     return (
@@ -392,7 +459,14 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
 
               {/* Add label */}
               <div className="detail-item">
-                <span className="label">Tag a person</span>
+                <span className="label">
+                  {selectedFace ? `Relabel Target Face` : 'Tag a person'}
+                </span>
+                {selectedFace && (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--accent)', marginBottom: '0.4rem', background: 'rgba(232, 213, 176, 0.1)', padding: '0.3rem 0.6rem', borderRadius: '4px' }}>
+                    Updating: {selectedFace.person_name || `Person ${selectedFace.person_id}`}
+                  </div>
+                )}
                 <div className="add-label-section">
                   <div className="add-label-row">
                     <select
@@ -424,8 +498,11 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
                         (selectedPersonForAdd === 'other' && !customPersonLabel.trim())
                       }
                     >
-                      Add Tag
+                      {selectedFace ? 'Update Face Tag' : 'Add Tag'}
                     </button>
+                    {selectedFace && (
+                      <button type="button" onClick={() => setSelectedFace(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textAlign: 'center' }}>Cancel face selection</button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -435,6 +512,15 @@ function PhotoCard({ photo, onPersonTagCleared, cardRef }) {
             {/* Footer */}
             <div className="modal-footer">
               <span className="modal-date">Added {formatDateTime(photo.created_at)}</span>
+              <button 
+                type="button" 
+                onClick={handleRescan}
+                className="add-label-btn" 
+                style={{ width: 'auto', padding: '0.4rem 0.8rem', fontSize: '0.75rem', marginLeft: 'auto' }}
+                disabled={isRescanning}
+              >
+                {isRescanning ? 'Scanning...' : 'Rescan Picture'}
+              </button>
             </div>
           </div>
 

@@ -19,8 +19,9 @@ function App() {
   }
 
   return (
-    <div className="app">
-      <header className="app-header">
+    <>
+      <div className="app">
+        <header className="app-header">
         <button
           className="sidebar-toggle-btn"
           onClick={() => setIsSidebarOpen(true)}
@@ -43,13 +44,14 @@ function App() {
           refreshKey={refreshKey}
         />
       </main>
+    </div>
 
       <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         onRefresh={refreshAll}
       />
-    </div>
+    </>
   )
 }
 

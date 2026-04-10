@@ -295,6 +295,10 @@
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  height: 100%;
+  width: 100%;
+  min-height: 0;
+  min-width: 0;
 }
 
 .modal-image-container::after {
@@ -308,13 +312,61 @@
   pointer-events: none;
 }
 
-.modal-image {
+.modal-image-wrapper {
+  position: relative;
+  display: block;
   max-width: 100%;
   max-height: 100%;
-  object-fit: contain;
+  margin: 0 auto;
+}
+
+.modal-image {
+  width: 100%;
+  height: 100%;
+  object-fit: fill; /* Native stretch into the ratio-locked wrapper */
   display: block;
   user-select: none;
   animation: modalReveal 0.5s cubic-bezier(0.22, 1, 0.36, 1) 0.05s both;
+}
+
+/* ── Face Overlay ── */
+.face-box {
+  position: absolute;
+  border: 2px solid;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.3s ease, background-color 0.2s, box-shadow 0.2s;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+.modal-image-wrapper:hover .face-box, .face-box.active {
+  opacity: 1;
+}
+
+.face-box:hover, .face-box.active {
+  background-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+.face-box-label {
+  position: absolute;
+  top: -24px;
+  left: -2px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.face-box:hover .face-box-label, .face-box.active .face-box-label {
+  opacity: 1;
 }
 
 .modal-video-wrapper {

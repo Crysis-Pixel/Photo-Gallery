@@ -208,6 +208,18 @@ def remove_person_tag(file_id: int, person_id: int, db: Session = Depends(get_db
     return result
 
 
+@router.patch("/faces/{face_id}", response_model=schemas.FaceResponse)
+def update_face(face_id: int, body: schemas.FilePersonAdd, db: Session = Depends(get_db)):
+    result = crud.update_face_person_tag(
+        db, face_id,
+        person_id=body.person_id,
+        person_name=body.person_name,
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Face not found")
+    return result
+
+
 # ── Generic file endpoints ─────────────────────────────────────────────────────
 
 @router.patch("/{file_id}", response_model=schemas.FileResponse)
@@ -216,6 +228,16 @@ def update_file(file_id: int, updates: schemas.FileUpdate, db: Session = Depends
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
     return db_file
+
+
+@router.post("/{file_id}/rescan", response_model=schemas.FileResponse)
+def rescan_file(file_id: int, db: Session = Depends(get_db)):
+    db_file = crud.get_file_by_id(db, file_id)
+    if not db_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    updated_file = crud.auto_tag_file(db, db_file, tag_category=True, tag_scenario=True, tag_faces=True)
+    return updated_file
 
 
 @router.get("/debug-all")

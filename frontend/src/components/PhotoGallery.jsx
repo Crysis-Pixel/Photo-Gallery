@@ -54,7 +54,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     fetchPhotos()
   }, [refreshKey])
 
-const fetchPhotos = async () => {
+  const fetchPhotos = async () => {
     try {
       setLoading(true)
       const response = await fetch('http://localhost:8000/files/')
@@ -66,6 +66,10 @@ const fetchPhotos = async () => {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handlePhotoUpdated = (updatedPhoto) => {
+    setPhotos(prev => prev.map(p => p.id === updatedPhoto.id ? updatedPhoto : p));
   }
 
   const getUniqueCategories = () => Array.from(new Set(photos.map(p => p.category).filter(Boolean))).sort()
@@ -159,7 +163,7 @@ const fetchPhotos = async () => {
                   key={photo.id}
                   photo={photo}
                   cardRef={cardRefs.current[photo.id]}
-                  onPersonTagCleared={fetchPhotos}
+                  onPhotoUpdated={handlePhotoUpdated}
                 />
               ))
             ) : (

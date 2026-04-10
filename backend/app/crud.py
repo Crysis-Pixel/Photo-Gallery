@@ -5,7 +5,7 @@ from app.models import File, FolderConfig, Person, Face
 from app.schemas import FileCreate, FileUpdate
 from sqlalchemy.exc import IntegrityError
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 import mediapipe as mp
 import os
 import re
@@ -241,7 +241,9 @@ def auto_tag_file(
 
     # Rest of the existing image processing code...
     try:
-        image = Image.open(file_path).convert("RGB")
+        image = Image.open(file_path)
+        image = ImageOps.exif_transpose(image)
+        image = image.convert("RGB")
 
         # ───────────── CATEGORY ─────────────
         if tag_category:
@@ -286,7 +288,7 @@ def auto_tag_file(
         if tag_faces:
             try:
                 SIM_THRESHOLD = 0.65
-                MIN_FACE_RATIO = 0.07
+                MIN_FACE_RATIO = 0.04
 
                 # Clear existing faces if re-detecting
                 db.query(Face).filter(
@@ -323,7 +325,7 @@ def auto_tag_file(
 
 def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
                             SIM_THRESHOLD: float = 0.65,
-                            MIN_FACE_RATIO: float = 0.07):
+                            MIN_FACE_RATIO: float = 0.04):
     if not INSIGHTFACE_AVAILABLE:
         db_file.person_name = None
         return
@@ -385,7 +387,14 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
                 print(f"[insightface-new] file={os.path.basename(db_file.path)} "
                       f"created Person {matched_person.id} sim_to_best={best_sim:.4f}")
 
-            face_row = Face(file_id=db_file.id, person_id=matched_person.id)
+            face_row = Face(
+                file_id=db_file.id, 
+                person_id=matched_person.id,
+                box_left=float(face.bbox[0] / width),
+                box_top=float(face.bbox[1] / height),
+                box_width=float((face.bbox[2] - face.bbox[0]) / width),
+                box_height=float((face.bbox[3] - face.bbox[1]) / height)
+            )
             db.add(face_row)
             used_person_ids.append(matched_person.id)
 
@@ -405,7 +414,12 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
 
 def _tag_faces_facenet(db: Session, db_file: File, image, np, SIM_THRESHOLD: float):
     try:
-        face_tensors = mtcnn(image)
+        boxes, probs = mtcnn.detect(image)
+        if boxes is None:
+            db_file.person_name = None
+            return
+
+        face_tensors = mtcnn.extract(image, boxes, None)
         if face_tensors is None:
             db_file.person_name = None
             return
@@ -429,7 +443,9 @@ def _tag_faces_facenet(db: Session, db_file: File, image, np, SIM_THRESHOLD: flo
         persons = db.query(Person).all()
         used_person_ids = []
 
-        for emb in embeddings_np:
+        width, height = image.size
+
+        for i, emb in enumerate(embeddings_np):
             best_sim = -1.0
             best_person = None
             for person in persons:
@@ -448,7 +464,15 @@ def _tag_faces_facenet(db: Session, db_file: File, image, np, SIM_THRESHOLD: flo
                     continue
                 persons.append(matched_person)
 
-            face = Face(file_id=db_file.id, person_id=matched_person.id)
+            box = boxes[i]
+            face = Face(
+                file_id=db_file.id, 
+                person_id=matched_person.id,
+                box_left=float(box[0] / width),
+                box_top=float(box[1] / height),
+                box_width=float((box[2] - box[0]) / width),
+                box_height=float((box[3] - box[1]) / height)
+            )
             db.add(face)
             used_person_ids.append(matched_person.id)
             print(f"[face-match] file={db_file.path} person_id={matched_person.id} name={matched_person.name} sim={best_sim:.4f}")
@@ -512,7 +536,24 @@ def _tag_faces_mediapipe(db: Session, db_file: File, image, np):
                         continue
                     persons.append(matched_person)
 
-                face = Face(file_id=db_file.id, person_id=matched_person.id)
+                x_coords = [lm.x for lm in fl.landmark]
+                y_coords = [lm.y for lm in fl.landmark]
+                min_x, max_x = min(x_coords), max(x_coords)
+                min_y, max_y = min(y_coords), max(y_coords)
+                
+                box_left = max(0.0, float(min_x))
+                box_top = max(0.0, float(min_y))
+                box_width = min(1.0 - box_left, float(max_x - min_x))
+                box_height = min(1.0 - box_top, float(max_y - min_y))
+
+                face = Face(
+                    file_id=db_file.id, 
+                    person_id=matched_person.id,
+                    box_left=box_left,
+                    box_top=box_top,
+                    box_width=box_width,
+                    box_height=box_height
+                )
                 db.add(face)
                 used_person_ids.append(matched_person.id)
 
@@ -733,7 +774,43 @@ def update_file(db: Session, file_id: int, updates: FileUpdate):
         setattr(db_file, key, value)
     db.commit()
     db.refresh(db_file)
+    db.refresh(db_file)
     return db_file
+
+
+def update_face_person_tag(db: Session, face_id: int, person_id: Optional[int] = None, person_name: Optional[str] = None):
+    face = db.query(Face).filter(Face.id == face_id).first()
+    if not face:
+        return None
+
+    person = None
+    if person_id is not None:
+        person = db.query(Person).filter(Person.id == person_id).first()
+        if not person:
+            return None
+
+    if person is None and person_name:
+        person = db.query(Person).filter(Person.name == person_name).first()
+        if person is None:
+            person = Person(name=person_name, color=choose_person_color(db))
+            db.add(person)
+            db.commit()
+            db.refresh(person)
+
+    if person is None:
+        return None
+
+    face.person_id = person.id
+    db.commit()
+    db.refresh(face)
+
+    file = db.query(File).filter(File.id == face.file_id).first()
+    if file:
+        file.person_name = person.name
+        db.add(file)
+        db.commit()
+
+    return face
 
 
 def add_file_person_tag(db: Session, file_id: int, person_id: Optional[int] = None,
