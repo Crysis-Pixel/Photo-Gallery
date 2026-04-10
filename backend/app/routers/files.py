@@ -231,18 +231,18 @@ def list_all_files_debug(db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=List[schemas.FileResponse])
-def list_files(db: Session = Depends(get_db)):
+def list_files(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db)):
     folder_configs = crud.get_scan_folders(db)
     valid_folders = [fc.path for fc in folder_configs if fc.path and os.path.isdir(fc.path)]
 
     if not valid_folders:
         return []
 
-    files = crud.get_files(db, folder_paths=valid_folders)
-    if not files:
+    files = crud.get_files(db, folder_paths=valid_folders, skip=skip, limit=limit)
+    if not files and skip == 0:
         for fp in valid_folders:
             crud.scan_and_tag_folder(db, fp)
-        files = crud.get_files(db, folder_paths=valid_folders)
+        files = crud.get_files(db, folder_paths=valid_folders, skip=skip, limit=limit)
     return files
 
 

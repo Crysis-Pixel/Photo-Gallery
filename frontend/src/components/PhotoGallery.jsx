@@ -9,6 +9,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [filterCategory, setFilterCategory] = useState('')
   const [filterScenario, setFilterScenario] = useState('')
   const [filterPerson, setFilterPerson] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
 
   const persons = personsProp || []
 
@@ -22,6 +23,10 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
       }
     })
   }, [photos])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filterCategory, filterScenario, filterPerson])
 
   useImperativeHandle(ref, () => ({
     scrollToPhoto: (photoId) => {
@@ -73,6 +78,10 @@ const fetchPhotos = async () => {
     return categoryMatch && scenarioMatch && personMatch
   })
 
+  const ITEMS_PER_PAGE = 100;
+  const totalPages = Math.ceil(filteredPhotos.length / ITEMS_PER_PAGE);
+  const paginatedPhotos = filteredPhotos.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
   if (error) {
     return <div className="gallery-container"><div className="error-message">Error: {error}</div></div>
   }
@@ -109,12 +118,43 @@ const fetchPhotos = async () => {
         <div className="loading">Loading photos...</div>
       ) : (
         <>
-          <div className="photo-count">
-            Showing {filteredPhotos.length} of {photos.length} photos
+          <div className="photo-count" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <span>Showing {paginatedPhotos.length} of {filteredPhotos.length} photos</span>
+            {totalPages > 1 && (
+              <div className="pagination-controls">
+                <button 
+                  className="pagination-btn"
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  Prev
+                </button>
+                <div className="pagination-select-wrapper">
+                  <span>Page</span>
+                  <select 
+                    className="page-select"
+                    value={currentPage}
+                    onChange={e => setCurrentPage(Number(e.target.value))}
+                  >
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                      <option key={page} value={page}>{page}</option>
+                    ))}
+                  </select>
+                  <span>of {totalPages}</span>
+                </div>
+                <button 
+                  className="pagination-btn"
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
           <div className="gallery-grid">
-            {filteredPhotos.length > 0 ? (
-              filteredPhotos.map(photo => (
+            {paginatedPhotos.length > 0 ? (
+              paginatedPhotos.map(photo => (
                 <PhotoCard
                   key={photo.id}
                   photo={photo}

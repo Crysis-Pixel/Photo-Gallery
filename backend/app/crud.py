@@ -233,8 +233,8 @@ def auto_tag_file(
         # Just set basic video info if missing
         if tag_category and not db_file.category:
             db_file.category = "video"
-        if tag_scenario and not db_file.scenario:
-            db_file.scenario = f"Video: {os.path.basename(file_path)}"
+        # if tag_scenario and not db_file.scenario:
+        #     db_file.scenario = f"Video: {os.path.basename(file_path)}"
         db.commit()
         db.refresh(db_file)
         return db_file
@@ -247,8 +247,16 @@ def auto_tag_file(
         if tag_category:
             try:
                 category_labels = [
-                    "personal photo", "anime", "document", "screenshot", "object",
-                    "celebrity", "car", "video game", "nature", "portrait", "food", "work"
+                    # People & social
+                    "selfie", "group photo", "family photo",
+                    # Events & moments  
+                    "birthday", "wedding", "party", "graduation", "holiday",
+                    # Places & travel
+                    "travel", "nature", "cityscape", "beach", "indoor",
+                    # Objects & misc
+                    "food", "pet", "car", "screenshot", "document",
+                    # Art & media
+                    "anime", "artwork", "meme", 
                 ]
                 category_tokens = clip.tokenize(category_labels).to(device)
 
@@ -879,8 +887,8 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
                 # For videos, just set basic info without AI processing
                 if not db_file.category or force:
                     db_file.category = "video"
-                if not db_file.scenario or force:
-                    db_file.scenario = f"Video file: {os.path.basename(file_path)}"
+                # if not db_file.scenario or force:
+                #     db_file.scenario = f"Video file: {os.path.basename(file_path)}"
                 db.add(db_file)
                 db.commit()
             
@@ -953,8 +961,8 @@ def recheck_and_tag_missing(db: Session) -> dict:
                         # For videos, set basic info
                         if not db_file.category:
                             db_file.category = "video"
-                        if not db_file.scenario:
-                            db_file.scenario = f"Video file: {os.path.basename(file_path)}"
+                        # if not db_file.scenario:
+                        #     db_file.scenario = f"Video file: {os.path.basename(file_path)}"
                         file_db.add(db_file)
                         file_db.commit()
 
