@@ -208,7 +208,7 @@ def remove_person_tag(file_id: int, person_id: int, db: Session = Depends(get_db
     return result
 
 
-@router.patch("/faces/{face_id}", response_model=schemas.FaceResponse)
+@router.patch("/faces/{face_id}", response_model=schemas.FileResponse)
 def update_face(face_id: int, body: schemas.FilePersonAdd, db: Session = Depends(get_db)):
     result = crud.update_face_person_tag(
         db, face_id,

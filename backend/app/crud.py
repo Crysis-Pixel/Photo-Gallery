@@ -809,8 +809,9 @@ def update_face_person_tag(db: Session, face_id: int, person_id: Optional[int] =
         file.person_name = person.name
         db.add(file)
         db.commit()
+        db.refresh(file)
 
-    return face
+    return file
 
 
 def add_file_person_tag(db: Session, file_id: int, person_id: Optional[int] = None,
