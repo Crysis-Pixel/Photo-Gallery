@@ -268,6 +268,95 @@ def list_files(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db))
     return files
 
 
+THUMB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'thumbnails')
+os.makedirs(THUMB_DIR, exist_ok=True)
+
+THUMB_W = 400
+THUMB_H = 340
+
+
+@router.get("/{file_id}/thumbnail")
+def get_thumbnail(file_id: int, db: Session = Depends(get_db)):
+    """Return a cached WebP thumbnail cropped to card proportions (cover).
+    For videos, extracts a frame with OpenCV. Falls back to full image if anything fails."""
+    file = db.query(File).filter(File.id == file_id).first()
+    if not file:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not os.path.exists(file.path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    thumb_path = os.path.join(THUMB_DIR, f"{file_id}.webp")
+
+    # Serve cached thumbnail immediately if it exists
+    if os.path.exists(thumb_path):
+        return FileResponse(thumb_path, media_type="image/webp", headers={
+            "Cache-Control": "public, max-age=604800, immutable"
+        })
+
+    ext = os.path.splitext(file.path)[1].lower()
+    video_exts = {'.mp4', '.mov', '.avi', '.mkv', '.webm'}
+
+    try:
+        if ext in video_exts:
+            # Extract a frame from the video using OpenCV
+            import cv2
+            cap = cv2.VideoCapture(file.path)
+            # Read rotation metadata before seeking
+            rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META) or 0)
+            # Seek to ~1 second in
+            cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
+            ret, frame = cap.read()
+            cap.release()
+            if not ret:
+                # Try frame 0 if 1s fails
+                cap = cv2.VideoCapture(file.path)
+                rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META) or 0)
+                ret, frame = cap.read()
+                cap.release()
+            if not ret:
+                raise RuntimeError("Could not extract video frame")
+            # Convert BGR -> RGB then to PIL
+            from PIL import Image, ImageOps
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            # Apply video rotation metadata (same issue as EXIF on photos)
+            if rotation == 90:
+                img = img.rotate(-90, expand=True)
+            elif rotation == 180:
+                img = img.rotate(180, expand=True)
+            elif rotation == 270:
+                img = img.rotate(90, expand=True)
+        else:
+            from PIL import Image, ImageOps
+            img = Image.open(file.path)
+            img = ImageOps.exif_transpose(img)
+            img = img.convert("RGB")
+
+        # Cover-crop to exact card dimensions
+        from PIL import ImageOps as _io
+        img = _io.fit(img, (THUMB_W, THUMB_H), method=Image.LANCZOS)
+        img.save(thumb_path, "WEBP", quality=82, method=4)
+
+        return FileResponse(thumb_path, media_type="image/webp", headers={
+            "Cache-Control": "public, max-age=604800, immutable"
+        })
+
+    except Exception as e:
+        print(f"Thumbnail generation failed for {file_id}: {e}")
+        # Fall back to full content
+        from fastapi.responses import RedirectResponse
+        return RedirectResponse(url=f"/files/{file_id}/content")
+
+
+@router.delete("/{file_id}/thumbnail")
+def delete_thumbnail(file_id: int):
+    """Invalidate the cached thumbnail (called after rescan)."""
+    thumb_path = os.path.join(THUMB_DIR, f"{file_id}.webp")
+    if os.path.exists(thumb_path):
+        os.remove(thumb_path)
+    return {"deleted": os.path.exists(thumb_path) is False}
+
+
 @router.get("/{file_id}/content")
 def get_file_content(file_id: int, db: Session = Depends(get_db)):
     """Serve file content with proper MIME types for video streaming"""

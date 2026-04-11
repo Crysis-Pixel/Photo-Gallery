@@ -86,6 +86,7 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
   }
 
   const getImageUrl = () => `${API}/${photo.id}/content`
+  const getThumbnailUrl = () => `${API}/${photo.id}/thumbnail`
   const getFileName = () => photo.path.split('\\').pop() || photo.path.split('/').pop()
 
   const formatDate = (dateStr) =>
@@ -154,12 +155,10 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
     event.stopPropagation()
     setIsRescanning(true)
     try {
-      const response = await fetch(`${API}/${photo.id}/rescan`, {
-        method: 'POST',
-      })
-      if (!response.ok) {
-        throw new Error('Rescan failed')
-      }
+      // Invalidate cached thumbnail so it regenerates after rescan
+      await fetch(`${API}/${photo.id}/thumbnail`, { method: 'DELETE' }).catch(() => {})
+      const response = await fetch(`${API}/${photo.id}/rescan`, { method: 'POST' })
+      if (!response.ok) throw new Error('Rescan failed')
       const updatedPhoto = await response.json()
       onPhotoUpdated?.(updatedPhoto)
     } catch (err) {
@@ -224,10 +223,11 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
           <video
             ref={cardVideoRef}
             src={getImageUrl()}
+            poster={getThumbnailUrl()}
             className="photo-image"
             muted
             playsInline
-            preload="metadata"
+            preload="none"
             onError={() => setVideoError(true)}
             onEnded={() => { setIsPlaying(false); setShowPlayOverlay(true); if (cardVideoRef.current) cardVideoRef.current.currentTime = 0 }}
             onPlay={() => { setIsPlaying(true); setShowPlayOverlay(false) }}
@@ -244,8 +244,9 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
     if (!imageError && isImageFile()) {
       return (
         <img
-          src={getImageUrl()}
+          src={getThumbnailUrl()}
           alt={getFileName()}
+          loading="lazy"
           onError={() => setImageError(true)}
           className="photo-image"
         />
