@@ -116,12 +116,11 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
   }
 
 const removeFolder = async (id) => {
-
   try {
     const res = await fetch(`http://localhost:8000/files/folder/${id}`, { method: 'DELETE' });
     
     if (res.ok) {
-      fetchFolders();           // refresh sidebar
+      await fetchFolders();     // refresh sidebar list
       onRefresh?.();            // refresh gallery + person section
     } else {
       const err = await res.json().catch(() => ({}));

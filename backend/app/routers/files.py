@@ -1,5 +1,5 @@
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from app import crud, schemas
@@ -71,6 +71,7 @@ def create_file(file: schemas.FileCreate, db: Session = Depends(get_db)):
 
 @router.post("/rescan")
 def rescan_folder(
+    background_tasks: BackgroundTasks,
     folder_path: Optional[str] = Query(default=None),
     force: bool = Query(default=True),
     db: Session = Depends(get_db),
@@ -93,22 +94,25 @@ def rescan_folder(
                 detail="No folders configured. Add a folder via POST /files/folder first.",
             )
 
-    totals = {"total_files": 0, "tagged_files": 0, "skipped_files": 0}
-    for fp in targets:
-        r = crud.scan_and_tag_folder(db, fp, force=force)
-        totals["total_files"] += r["total_files"]
-        totals["tagged_files"] += r["tagged_files"]
-        totals["skipped_files"] += r["skipped_files"]
-    crud.cleanup_orphaned_persons(db)
+    def run_bg_scan():
+        bg_db = SessionLocal()
+        try:
+            for fp in targets:
+                crud.scan_and_tag_folder(bg_db, fp, force=force)
+            crud.cleanup_orphaned_persons(bg_db)
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(run_bg_scan)
+    
     return {
-        "message": "Folder scan completed",
+        "message": "Folder scan started in background",
         "folders": targets,
-        **totals,
     }
 
 
 @router.post("/recheck")
-def recheck_missing(db: Session = Depends(get_db)):
+def recheck_missing(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """
     Smart recheck: new files + incomplete records only.
     """
@@ -120,13 +124,18 @@ def recheck_missing(db: Session = Depends(get_db)):
             detail="No folders configured. Add a folder first."
         )
 
-    results = crud.recheck_and_tag_missing(db)
-    crud.cleanup_orphaned_persons(db)
+    def run_bg_recheck():
+        bg_db = SessionLocal()
+        try:
+            crud.recheck_and_tag_missing(bg_db)
+            crud.cleanup_orphaned_persons(bg_db)
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(run_bg_recheck)
+
     return {
-        "message": "Recheck completed successfully",
-        "new_files": results["new_files"],
-        "retagged_files": results["retagged_files"],
-        "errors": results["errors"],
+        "message": "Recheck started in background",
     }
 
 
@@ -236,7 +245,7 @@ def rescan_file(file_id: int, db: Session = Depends(get_db)):
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
     
-    updated_file = crud.auto_tag_file(db, db_file, tag_category=True, tag_scenario=True, tag_faces=True)
+    updated_file = crud.auto_tag_file(db, db_file, tag_category=True, tag_scenario=True, tag_faces=True, force_faces=True)
     return updated_file
 
 
@@ -253,7 +262,7 @@ def list_all_files_debug(db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=List[schemas.FileResponse])
-def list_files(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db)):
+def list_files(background_tasks: BackgroundTasks, skip: int = 0, limit: int = 10000, db: Session = Depends(get_db)):
     folder_configs = crud.get_scan_folders(db)
     valid_folders = [fc.path for fc in folder_configs if fc.path and os.path.isdir(fc.path)]
 
@@ -262,13 +271,29 @@ def list_files(skip: int = 0, limit: int = 10000, db: Session = Depends(get_db))
 
     files = crud.get_files(db, folder_paths=valid_folders, skip=skip, limit=limit)
     if not files and skip == 0:
-        for fp in valid_folders:
-            crud.scan_and_tag_folder(db, fp)
-        files = crud.get_files(db, folder_paths=valid_folders, skip=skip, limit=limit)
+        def run_bg_initial_scan():
+            import traceback
+            bg_db = SessionLocal()
+            try:
+                print("[bg_scan] Starting initial background scan...")
+                for fp in valid_folders:
+                    crud.scan_and_tag_folder(bg_db, fp)
+                crud.cleanup_orphaned_persons(bg_db)
+                print("[bg_scan] Initial background scan completed.")
+            except Exception as e:
+                print(f"[bg_scan] CRITICAL ERROR in background scan: {e}")
+                traceback.print_exc()
+            finally:
+                bg_db.close()
+        
+        background_tasks.add_task(run_bg_initial_scan)
+        
     return files
 
 
-THUMB_DIR = os.path.join(os.path.dirname(__file__), '..', '..', 'thumbnails')
+# Move thumbnails outside the backend directory to avoid uvicorn --reload restarts
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+THUMB_DIR = os.path.join(PROJECT_ROOT, 'data', 'thumbnails')
 os.makedirs(THUMB_DIR, exist_ok=True)
 
 THUMB_W = 400

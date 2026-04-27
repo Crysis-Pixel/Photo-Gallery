@@ -62,10 +62,15 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("ALTER TABLE faces ADD COLUMN box_width FLOAT"))
                 conn.execute(text("ALTER TABLE faces ADD COLUMN box_height FLOAT"))
 
+    import threading
     try:
-        scan_folder_task()
+        # Run the initial scan in a background thread so it doesn't block server startup
+        # and allows the frontend to fetch photos immediately
+        thread = threading.Thread(target=scan_folder_task, daemon=True)
+        thread.start()
+        print("Startup scan scheduled in the background.")
     except Exception as e:
-        print(f"Startup scan failed (app will still start): {e}")
+        print(f"Startup scan failed to start: {e}")
 
     scheduler.add_job(scan_folder_task, "interval", minutes=5)
     scheduler.start()

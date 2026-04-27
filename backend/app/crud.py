@@ -11,6 +11,7 @@ import os
 import re
 import json
 import numpy as np
+from concurrent.futures import ThreadPoolExecutor
 
 # ── InsightFace Setup ───────────────────────────────────────────────────────
 try:
@@ -93,15 +94,19 @@ except ImportError:
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 try:
-    model, preprocess = clip.load("ViT-B/32", device=device)
+    # CLIP sometimes has issues with .half() in its forward pass, so we keep it in float32.
+    # The batching alone will provide a significant speedup.
+    model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
 except RuntimeError:
     device = "cpu"
-    model, preprocess = clip.load("ViT-B/32", device=device)
+    model, preprocess = clip.load("ViT-B/32", device=device, jit=False)
 
 try:
     from transformers import BlipProcessor, BlipForConditionalGeneration
     blip_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
     blip_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base").to(device)
+    if device == "cuda":
+        blip_model = blip_model.half()
     BLIP_AVAILABLE = True
 except Exception as e:
     print(f"BLIP model not available: {e}")
@@ -133,7 +138,11 @@ def get_image_description(image: Image.Image) -> str:
         return None
     try:
         inputs = blip_processor(image, return_tensors="pt").to(device)
-        out = blip_model.generate(**inputs)
+        if device == "cuda":
+            # Convert float inputs to half to match the model
+            inputs = {k: v.half() if v.dtype == torch.float32 else v for k, v in inputs.items()}
+        with torch.no_grad():
+            out = blip_model.generate(**inputs)
         description = blip_processor.decode(out[0], skip_special_tokens=True)
         return description
     except Exception as e:
@@ -214,6 +223,161 @@ def _create_new_person(db: Session, emb) -> Optional[Person]:
     return new_person
 
 
+# ── Batch Auto-tagging Engine ──────────────────────────────────────────────────
+
+def batch_auto_tag_files(
+    db: Session,
+    db_files: List[File],
+    tag_category=True,
+    tag_scenario=True,
+    tag_faces=True,
+    batch_size=16
+):
+    """
+    Process a list of files in batches for maximum GPU utilization and faster I/O.
+    """
+    if not db_files:
+        return
+    
+    # Filter out videos - they are handled separately or skipped
+    photos = [f for f in db_files if f.file_type == "photo"]
+    videos = [f for f in db_files if f.file_type == "video"]
+    
+    # Handle videos simply
+    for v in videos:
+        if tag_category and not v.category:
+            v.category = "video"
+        db.add(v)
+    
+    if not photos:
+        db.commit()
+        return
+
+    # Helper for parallel image loading
+    def load_image(file_path):
+        try:
+            img = Image.open(file_path)
+            img = ImageOps.exif_transpose(img)
+            img = img.convert("RGB")
+            return img
+        except Exception as e:
+            print(f"[load error] {file_path}: {e}")
+            return None
+
+    # Process in batches
+    for i in range(0, len(photos), batch_size):
+        batch = photos[i:i + batch_size]
+        batch_paths = [f.path for f in batch]
+        
+        # 1. Parallel loading
+        with ThreadPoolExecutor(max_workers=min(len(batch), 4)) as executor:
+            images = list(executor.map(load_image, batch_paths))
+        
+        # Filter out failed loads
+        valid_indices = [idx for idx, img in enumerate(images) if img is not None]
+        if not valid_indices:
+            continue
+            
+        valid_batch = [batch[idx] for idx in valid_indices]
+        valid_images = [images[idx] for idx in valid_indices]
+        
+        # 2. Batch Category (CLIP)
+        if tag_category:
+            try:
+                category_labels = [
+                    "selfie", "group photo", "family photo", "birthday", "wedding", 
+                    "party", "graduation", "holiday", "travel", "nature", "cityscape", 
+                    "beach", "indoor", "food", "pet", "car", "screenshot", "document",
+                    "anime", "artwork", "meme"
+                ]
+                category_tokens = clip.tokenize(category_labels).to(device)
+                
+                # Preprocess batch
+                preprocessed_images = torch.stack([preprocess(img) for img in valid_images]).to(device)
+                # Keep CLIP in float32 for stability
+
+                with torch.no_grad():
+                    image_features = model.encode_image(preprocessed_images)
+                    category_features = model.encode_text(category_tokens)
+                    
+                    # Convert to float for numerical stability and to avoid mixed-precision issues
+                    image_features = image_features.float()
+                    category_features = category_features.float()
+                    
+                    # Normalize features
+                    image_features /= image_features.norm(dim=-1, keepdim=True)
+                    category_features /= category_features.norm(dim=-1, keepdim=True)
+                    
+                    logits = (image_features @ category_features.T).softmax(dim=-1)
+                    
+                for idx, db_file in enumerate(valid_batch):
+                    if not db_file.category:
+                        best_idx = logits[idx].argmax().item()
+                        db_file.category = category_labels[best_idx]
+            except Exception as e:
+                print(f"[batch category error]: {e}")
+
+        # 3. Batch Scenario (BLIP)
+        if tag_scenario and BLIP_AVAILABLE:
+            try:
+                # BLIP doesn't support easy batching in this version without more complex code,
+                # but we can still loop over our preloaded images to save I/O time.
+                for idx, (db_file, img) in enumerate(zip(valid_batch, valid_images)):
+                    if not db_file.scenario:
+                        description = get_image_description(img)
+                        if description:
+                            db_file.scenario = sanitize_description(description)
+            except Exception as e:
+                print(f"[batch scenario error]: {e}")
+
+        # 4. Faces (InsightFace/FaceNet)
+        if tag_faces:
+            # Free up PyTorch cache so ONNX Runtime (InsightFace) has enough VRAM and doesn't crash the server
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+            # Faces are harder to batch because InsightFace doesn't support it well,
+            # so we process them sequentially but using our pre-loaded images.
+            SIM_THRESHOLD = 0.65
+            MIN_FACE_RATIO = 0.04
+            
+            for db_file, img in zip(valid_batch, valid_images):
+                try:
+                    # Check if faces are already tagged
+                    has_faces = db.query(Face).filter(Face.file_id == db_file.id).first() is not None
+                    if has_faces:
+                        continue
+
+                    # Skip face detection for anime and meme categories in batch mode
+                    if db_file.category in ["anime", "meme"]:
+                        # print(f"[batch face skip] Skipping face detection for {db_file.category}: {db_file.path}")
+                        continue
+
+                    # Clear existing faces if re-detecting (shouldn't happen with the check above, but for safety)
+                    # db.query(Face).filter(Face.file_id == db_file.id).delete(synchronize_session=False)
+                    
+                    if INSIGHTFACE_AVAILABLE:
+                        _tag_faces_insightface(db, db_file, img, np, SIM_THRESHOLD, MIN_FACE_RATIO, DET_THRESH=0.3)
+                    elif FACENET_AVAILABLE:
+                        _tag_faces_facenet(db, db_file, img, np, SIM_THRESHOLD)
+                    else:
+                        _tag_faces_mediapipe(db, db_file, img, np)
+                except Exception as fe:
+                    print(f"[batch face error] {db_file.path}: {fe}")
+                    # Clear CUDA cache if it's a memory error
+                    if "out of memory" in str(fe).lower():
+                        torch.cuda.empty_cache()
+
+        # 5. Save batch
+        try:
+            db.commit()
+            for f in valid_batch:
+                db.refresh(f)
+        except Exception as e:
+            print(f"[batch commit error]: {e}")
+            db.rollback()
+
+
 # ── Auto-tagging ───────────────────────────────────────────────────────────────
 
 def auto_tag_file(
@@ -221,7 +385,8 @@ def auto_tag_file(
     db_file: File,
     tag_category=True,
     tag_scenario=True,
-    tag_faces=True
+    tag_faces=True,
+    force_faces=False
 ):
     """Auto-tag a file - skip processing for videos"""
     file_path = db_file.path
@@ -263,10 +428,19 @@ def auto_tag_file(
                 category_tokens = clip.tokenize(category_labels).to(device)
 
                 with torch.no_grad():
-                    image_features = model.encode_image(
-                        preprocess(image).unsqueeze(0).to(device)
-                    )
+                    img_tensor = preprocess(image).unsqueeze(0).to(device)
+                    # CLIP stays in float32
+                        
+                    image_features = model.encode_image(img_tensor)
                     category_features = model.encode_text(category_tokens)
+                    
+                    # Convert to float for normalization and softmax stability
+                    image_features = image_features.float()
+                    category_features = category_features.float()
+                    
+                    image_features /= image_features.norm(dim=-1, keepdim=True)
+                    category_features /= category_features.norm(dim=-1, keepdim=True)
+                    
                     category_logits = (image_features @ category_features.T).softmax(dim=-1)
                     best_category_idx = category_logits[0].argmax().item()
 
@@ -286,31 +460,36 @@ def auto_tag_file(
 
         # ───────────── FACES ─────────────
         if tag_faces:
-            try:
-                SIM_THRESHOLD = 0.65
-                MIN_FACE_RATIO = 0.04
+            # Skip face detection for anime and meme unless forced (e.g. via individual rescan button)
+            if not force_faces and db_file.category in ["anime", "meme"]:
+                # print(f"[face skip] Skipping face detection for {db_file.category}: {file_path}")
+                pass
+            else:
+                try:
+                    SIM_THRESHOLD = 0.65
+                    MIN_FACE_RATIO = 0.01
 
-                # Clear existing faces if re-detecting
-                db.query(Face).filter(
-                    Face.file_id == db_file.id
-                ).delete(synchronize_session=False)
+                    # Clear existing faces if re-detecting
+                    db.query(Face).filter(
+                        Face.file_id == db_file.id
+                    ).delete(synchronize_session=False)
 
-                if INSIGHTFACE_AVAILABLE:
-                    _tag_faces_insightface(
-                        db, db_file, image, np, SIM_THRESHOLD, MIN_FACE_RATIO
-                    )
-                elif FACENET_AVAILABLE:
-                    _tag_faces_facenet(
-                        db, db_file, image, np, SIM_THRESHOLD
-                    )
-                else:
-                    _tag_faces_mediapipe(
-                        db, db_file, image, np
-                    )
+                    if INSIGHTFACE_AVAILABLE:
+                        _tag_faces_insightface(
+                            db, db_file, image, np, SIM_THRESHOLD, MIN_FACE_RATIO, DET_THRESH=0.1
+                        )
+                    elif FACENET_AVAILABLE:
+                        _tag_faces_facenet(
+                            db, db_file, image, np, SIM_THRESHOLD
+                        )
+                    else:
+                        _tag_faces_mediapipe(
+                            db, db_file, image, np
+                        )
 
-            except Exception as face_e:
-                print(f"[face error] {file_path}: {face_e}")
-                db_file.person_name = None
+                except Exception as face_e:
+                    print(f"[face error] {file_path}: {face_e}")
+                    db_file.person_name = None
 
         # ───────────── SAVE ─────────────
         db.commit()
@@ -325,7 +504,8 @@ def auto_tag_file(
 
 def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
                             SIM_THRESHOLD: float = 0.65,
-                            MIN_FACE_RATIO: float = 0.04):
+                            MIN_FACE_RATIO: float = 0.01,
+                            DET_THRESH: float = 0.5):
     if not INSIGHTFACE_AVAILABLE:
         db_file.person_name = None
         return
@@ -347,7 +527,7 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
         for face in faces:
             if face.embedding is None:
                 continue
-            if getattr(face, 'det_score', 0.0) < 0.5:
+            if getattr(face, 'det_score', 0.0) < DET_THRESH:
                 continue
             bbox = face.bbox.astype(int)
             face_width = bbox[2] - bbox[0]
@@ -630,6 +810,16 @@ def delete_person(db: Session, person_id: int):
     # Delete the person
     db.delete(person)
     db.commit()
+
+    # Reset person ID counter if database is empty
+    if db.query(Person).count() == 0:
+        from sqlalchemy import text
+        try:
+            db.execute(text("DELETE FROM sqlite_sequence WHERE name='persons'"))
+            db.commit()
+        except Exception:
+            pass
+
     return True
 
 
@@ -918,6 +1108,7 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
             if os.path.splitext(filename)[1].lower() in supported_formats:
                 file_paths.append(os.path.join(root, filename))
 
+    to_tag = []
     for file_path in file_paths:
         results["total_files"] += 1
         ext = os.path.splitext(file_path)[1].lower()
@@ -931,7 +1122,6 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
                     results["skipped_files"] += 1
                     continue
                 db_file = existing_file
-                # Update file_type if it was incorrectly set
                 if db_file.file_type != file_type:
                     db_file.file_type = file_type
             else:
@@ -952,30 +1142,30 @@ def scan_and_tag_folder(db: Session, folder_path: str, force: bool = False):
                 db_file.scenario = None
                 db_file.person_name = None
                 db.add(db_file)
-                try:
-                    db.commit()
-                    db.refresh(db_file)
-                except Exception:
-                    db.rollback()
+                # No commit here, let batch_auto_tag_files handle it or commit below
 
-            # Process based on file type
             if file_type == "photo":
-                auto_tag_file(db, db_file)
+                to_tag.append(db_file)
+                if len(to_tag) >= 32: # Process in chunks of 32 to avoid massive memory usage
+                    batch_auto_tag_files(db, to_tag)
+                    results["tagged_files"] += len(to_tag)
+                    to_tag = []
             else:
-                # For videos, just set basic info without AI processing
                 if not db_file.category or force:
                     db_file.category = "video"
-                # if not db_file.scenario or force:
-                #     db_file.scenario = f"Video file: {os.path.basename(file_path)}"
                 db.add(db_file)
                 db.commit()
-            
-            results["tagged_files"] += 1
+                results["tagged_files"] += 1
 
         except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+            print(f"Error scheduling {file_path}: {e}")
             db.rollback()
             results["skipped_files"] += 1
+
+    # Final batch
+    if to_tag:
+        batch_auto_tag_files(db, to_tag)
+        results["tagged_files"] += len(to_tag)
 
     return results
 
@@ -994,6 +1184,7 @@ def recheck_and_tag_missing(db: Session) -> dict:
     results = {
         "new_files": 0,
         "retagged_files": 0,
+        "removed_files": 0,
         "skipped_files": 0,
         "errors": 0,
     }
@@ -1004,7 +1195,9 @@ def recheck_and_tag_missing(db: Session) -> dict:
     if not valid_folders:
         return results
 
-    # PASS 1: ADD NEW FILES
+    to_tag = []
+    
+    # PASS 1: ADD NEW FILES (Metadata only)
     for folder_path in valid_folders:
         for root, _, files_in_dir in os.walk(folder_path):
             for filename in files_in_dir:
@@ -1015,91 +1208,56 @@ def recheck_and_tag_missing(db: Session) -> dict:
                 ext = os.path.splitext(file_path)[1].lower()
                 file_type = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
 
-                file_db = SessionLocal()
                 try:
-                    existing = file_db.query(File).filter(File.path == file_path).first()
-                    if existing:
-                        continue
-
-                    # New file
-                    db_file = File(path=file_path, file_type=file_type)
-                    file_db.add(db_file)
-
-                    try:
-                        file_db.commit()
-                        file_db.refresh(db_file)
-                    except IntegrityError:
-                        file_db.rollback()
-                        continue
-
-                    # Full tagging for new files (only images get full processing)
-                    if file_type == "photo":
-                        auto_tag_file(file_db, db_file)
-                    else:
-                        # For videos, set basic info
-                        if not db_file.category:
+                    existing = db.query(File).filter(File.path == file_path).first()
+                    if not existing:
+                        # New file
+                        db_file = File(path=file_path, file_type=file_type)
+                        db.add(db_file)
+                        db.commit()
+                        db.refresh(db_file)
+                        results["new_files"] += 1
+                        
+                        if file_type == "photo":
+                            to_tag.append(db_file)
+                        else:
                             db_file.category = "video"
-                        # if not db_file.scenario:
-                        #     db_file.scenario = f"Video file: {os.path.basename(file_path)}"
-                        file_db.add(db_file)
-                        file_db.commit()
-
-                    results["new_files"] += 1
-
+                            db.add(db_file)
+                            db.commit()
                 except Exception as e:
                     print(f"[recheck:new] Error: {file_path} → {e}")
-                    _safe_rollback(file_db)
+                    db.rollback()
                     results["errors"] += 1
-                finally:
-                    file_db.close()
 
-    # PASS 2: UPDATE ONLY MISSING DATA (skip videos for face detection)
+    # PASS 2: IDENTIFY INCOMPLETE OR MISSING FILES
     all_files = db.query(File).order_by(File.path).all()
-
     for f in all_files:
         if not os.path.exists(f.path):
+            # File is missing from disk - remove from DB
+            print(f"[recheck:cleanup] Removing missing file from DB: {f.path}")
+            db.query(Face).filter(Face.file_id == f.id).delete(synchronize_session=False)
+            db.delete(f)
+            results["removed_files"] += 1
             continue
 
-        # Skip face detection for videos
         if f.file_type == "video":
-            results["skipped_files"] += 1
             continue
-
-        # Check what is missing
+            
         has_faces = db.query(Face).filter(Face.file_id == f.id).first() is not None
-
-        needs_category = not f.category
-        needs_scenario = not f.scenario
-        needs_faces = not has_faces
-
-        # Skip fully tagged files
-        if not (needs_category or needs_scenario or needs_faces):
+        if not f.category or not f.scenario or not has_faces:
+            if f not in to_tag:
+                to_tag.append(f)
+        else:
             results["skipped_files"] += 1
-            continue
+    
+    if results["removed_files"] > 0:
+        db.commit()
 
-        file_db = SessionLocal()
-        try:
-            db_file = file_db.query(File).filter(File.id == f.id).first()
-            if db_file is None:
-                continue
-
-            # Partial tagging ONLY where needed
-            auto_tag_file(
-                file_db,
-                db_file,
-                tag_category=needs_category,
-                tag_scenario=needs_scenario,
-                tag_faces=needs_faces
-            )
-
-            results["retagged_files"] += 1
-
-        except Exception as e:
-            print(f"[recheck:update] Error: {f.path} → {e}")
-            _safe_rollback(file_db)
-            results["errors"] += 1
-        finally:
-            file_db.close()
+    # PROCESS ALL TAGS IN BATCHES
+    if to_tag:
+        print(f"[recheck] Processing {len(to_tag)} files in batches...")
+        batch_auto_tag_files(db, to_tag)
+        results["retagged_files"] = len(to_tag)
 
     return results
 
@@ -1125,4 +1283,19 @@ def cleanup_orphaned_persons(db: Session):
     db.query(Person).filter(Person.id.in_(orphaned_ids)).delete(synchronize_session=False)
 
     db.commit()
+
+    # Reset person ID counter if database is empty
+    if db.query(Person).count() == 0:
+        from sqlalchemy import text
+        try:
+            dialect = db.get_bind().dialect.name
+            if dialect == 'sqlite':
+                db.execute(text("DELETE FROM sqlite_sequence WHERE name='persons'"))
+            elif dialect == 'postgresql':
+                db.execute(text("ALTER SEQUENCE persons_id_seq RESTART WITH 1"))
+            db.commit()
+        except Exception as e:
+            print(f"Failed to reset persons sequence: {e}")
+            db.rollback()
+
     return len(orphaned_ids)

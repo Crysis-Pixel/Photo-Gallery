@@ -15,7 +15,7 @@ class File(Base):
     person_name = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    faces = relationship("Face", back_populates="file")
+    faces = relationship("Face", back_populates="file", cascade="all, delete-orphan")
 
     @property
     def person_ids(self):

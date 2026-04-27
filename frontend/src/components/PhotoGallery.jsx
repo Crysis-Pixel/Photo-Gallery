@@ -9,6 +9,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [filterCategory, setFilterCategory] = useState('')
   const [filterScenario, setFilterScenario] = useState('')
   const [filterPerson, setFilterPerson] = useState('')
+  const [filterAlbum, setFilterAlbum] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
 
   const persons = personsProp || []
@@ -26,13 +27,14 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
 
   useEffect(() => {
     setCurrentPage(1)
-  }, [filterCategory, filterScenario, filterPerson])
+  }, [filterCategory, filterScenario, filterPerson, filterAlbum])
 
   useImperativeHandle(ref, () => ({
     scrollToPhoto: (photoId) => {
       setFilterCategory('')
       setFilterScenario('')
       setFilterPerson('')
+      setFilterAlbum('')
 
       setTimeout(() => {
         const cardRef = cardRefs.current[photoId]
@@ -75,11 +77,19 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const getUniqueCategories = () => Array.from(new Set(photos.map(p => p.category).filter(Boolean))).sort()
   const getUniqueScenarios = () => Array.from(new Set(photos.map(p => p.scenario).filter(Boolean)))
 
+  const getAlbumName = (path) => {
+    if (!path) return 'Unknown'
+    const parts = path.split(/[\\/]/)
+    return parts.length > 1 ? parts[parts.length - 2] : 'Unknown'
+  }
+  const getUniqueAlbums = () => Array.from(new Set(photos.map(p => getAlbumName(p.path)))).sort()
+
   const filteredPhotos = photos.filter(photo => {
     const categoryMatch = !filterCategory || photo.category === filterCategory
     const scenarioMatch = !filterScenario || photo.scenario === filterScenario
     const personMatch = !filterPerson || (Array.isArray(photo.person_ids) && photo.person_ids.includes(Number(filterPerson)))
-    return categoryMatch && scenarioMatch && personMatch
+    const albumMatch = !filterAlbum || getAlbumName(photo.path) === filterAlbum
+    return categoryMatch && scenarioMatch && personMatch && albumMatch
   })
 
   const ITEMS_PER_PAGE = 100;
@@ -113,6 +123,13 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
           <select value={filterScenario} onChange={e => setFilterScenario(e.target.value)}>
             <option value="">All Scenarios</option>
             {getUniqueScenarios().map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div className="filter-group">
+          <label>Album:</label>
+          <select value={filterAlbum} onChange={e => setFilterAlbum(e.target.value)}>
+            <option value="">All Albums</option>
+            {getUniqueAlbums().map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         </div>
         <button className="refresh-btn" onClick={fetchPhotos}>Refresh</button>
