@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import '../styles/PersonManager.css'
 
-const API = 'http://localhost:8000/files'
+const API = `http://${window.location.hostname}:8000/files`
 
 export default function PersonManager({ onPersonsChange, onPhotoClick, refreshKey }) {
   const [persons, setPersons] = useState([])
@@ -117,14 +117,7 @@ const cancelDeletePerson = () => {
   closeDeleteModal()
 }
 
-  useEffect(() => {
-    if (!persons.length) return
-    persons.forEach(person => {
-      if (!loadedThumbnailsRef.current.has(person.id) && !photos[person.id]) {
-        fetchPhotos(person.id, false)
-      }
-    })
-  }, [persons])
+
 
   const stopMomentum = () => {
     if (momentumFrameRef.current) {
@@ -342,9 +335,9 @@ const cancelDeletePerson = () => {
               </button>
 
               <div className="pm-avatar">
-                {personPhotos[0] ? (
+                {person.cover_photo_id ? (
                   <img 
-                    src={`${API}/${personPhotos[0].id}/content`} 
+                    src={`${API}/${person.cover_photo_id}/content`} 
                     alt={person.name} 
                     className="pm-avatar-img" 
                   />

@@ -62,17 +62,24 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("ALTER TABLE faces ADD COLUMN box_width FLOAT"))
                 conn.execute(text("ALTER TABLE faces ADD COLUMN box_height FLOAT"))
 
+    if "files" in inspector.get_table_names():
+        existing_columns = {col["name"] for col in inspector.get_columns("files")}
+        if "face_scanned" not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE files ADD COLUMN face_scanned BOOLEAN DEFAULT FALSE"))
+
     import threading
     try:
         # Run the initial scan in a background thread so it doesn't block server startup
         # and allows the frontend to fetch photos immediately
         thread = threading.Thread(target=scan_folder_task, daemon=True)
         thread.start()
-        print("Startup scan scheduled in the background.")
+        print("Startup scan scheduled in the background (processing untagged files only).")
     except Exception as e:
         print(f"Startup scan failed to start: {e}")
 
-    scheduler.add_job(scan_folder_task, "interval", minutes=5)
+    # Run periodic scan less frequently to avoid overloading the system
+    scheduler.add_job(scan_folder_task, "interval", minutes=30)
     scheduler.start()
 
     yield
@@ -85,14 +92,8 @@ app = FastAPI(title="Photo Gallery API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:5173",
-        "http://localhost:5500",
-        "http://127.0.0.1:5500",
-    ],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

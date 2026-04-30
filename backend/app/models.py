@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float, Boolean
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -13,6 +13,7 @@ class File(Base):
     category = Column(String, nullable=True)
     scenario = Column(String, nullable=True)
     person_name = Column(String, nullable=True)
+    face_scanned = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     faces = relationship("Face", back_populates="file", cascade="all, delete-orphan")
@@ -41,17 +42,19 @@ class File(Base):
 
     @property
     def person_colors(self):
+        from app.utils import get_default_person_color
         if not self.faces:
             return []
         faces = sorted(self.faces, key=lambda f: f.id)
         colors = []
         for f in faces:
             if f.person_id is None:
+                colors.append("#e8d5b0") # Unknown/default accent
                 continue
             if f.person and f.person.color:
                 colors.append(f.person.color)
             else:
-                colors.append(None)
+                colors.append(get_default_person_color(f.person_id))
         return colors
 
 
@@ -92,7 +95,10 @@ class Face(Base):
 
     @property
     def person_color(self):
-        return self.person.color if self.person else None
+        from app.utils import get_default_person_color
+        if self.person and self.person.color:
+            return self.person.color
+        return get_default_person_color(self.person_id)
 
 
 class FolderConfig(Base):

@@ -8,6 +8,8 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
   const [folderSaving, setFolderSaving] = useState(false)
   const [scanLoading, setScanLoading] = useState(false)
   const [checkLoading, setCheckLoading] = useState(false)
+  const [mergeLoading, setMergeLoading] = useState(false)
+  const [mergeResult, setMergeResult] = useState(null)
 
   useEffect(() => {
     if (isOpen) {
@@ -17,7 +19,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
 
   const fetchFolders = async () => {
     try {
-      const res = await fetch('http://localhost:8000/files/folder')
+      const res = await fetch(`http://${window.location.hostname}:8000/files/folder`)
       if (res.ok) {
         const data = await res.json()
         setFolders(Array.isArray(data) ? data : [])
@@ -35,7 +37,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     setFolderError(null)
     
     try {
-        const res = await fetch('http://localhost:8000/files/folder', {
+        const res = await fetch(`http://${window.location.hostname}:8000/files/folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
@@ -72,7 +74,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     if (folders.length === 0) return
     setScanLoading(true)
     try {
-      await fetch('http://localhost:8000/files/rescan', { method: 'POST' })
+      await fetch(`http://${window.location.hostname}:8000/files/rescan`, { method: 'POST' })
       fetchFolders()
       onRefresh?.()                    // ← Refresh main UI
     } catch (e) {
@@ -93,7 +95,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     setFolderError(null)
 
     try {
-      const response = await fetch('http://localhost:8000/files/recheck', { method: 'POST' })
+      const response = await fetch(`http://${window.location.hostname}:8000/files/recheck`, { method: 'POST' })
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
@@ -115,9 +117,33 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     }
   }
 
+
+const mergePeopleYouKnow = async () => {
+    setMergeLoading(true)
+    setMergeResult(null)
+    setFolderError(null)
+    try {
+      const res = await fetch(
+        `http://${window.location.hostname}:8000/files/persons/auto-merge?threshold=0.62`,
+        { method: 'POST' }
+      )
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err?.detail || 'Auto-merge failed')
+      }
+      const data = await res.json()
+      setMergeResult(data)
+      if (data.merged > 0) onRefresh?.()
+    } catch (e) {
+      setFolderError(e.message || 'Auto-merge failed')
+    } finally {
+      setMergeLoading(false)
+    }
+  }
+
 const removeFolder = async (id) => {
   try {
-    const res = await fetch(`http://localhost:8000/files/folder/${id}`, { method: 'DELETE' });
+    const res = await fetch(`http://${window.location.hostname}:8000/files/folder/${id}`, { method: 'DELETE' });
     
     if (res.ok) {
       await fetchFolders();     // refresh sidebar list
@@ -193,6 +219,24 @@ const removeFolder = async (id) => {
             >
               {checkLoading ? 'Rechecking...' : 'Check Missing Files and Details'}
             </button>
+
+            <button
+              className="merge-people-btn"
+              onClick={mergePeopleYouKnow}
+              disabled={mergeLoading}
+            >
+              {mergeLoading ? 'Comparing faces…' : '✦ Merge People You Know'}
+            </button>
+
+            {mergeResult && (
+              <div className="merge-result">
+                <span className="merge-result-icon">✓</span>
+                <span>
+                  <strong>{mergeResult.merged}</strong> merged into known people
+                  {mergeResult.skipped > 0 && ` · ${mergeResult.skipped} no match found`}
+                </span>
+              </div>
+            )}
           </div>
 
           {folderError && <div className="sidebar-error">{folderError}</div>}

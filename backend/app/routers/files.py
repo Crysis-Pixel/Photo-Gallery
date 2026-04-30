@@ -4,10 +4,11 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from app import crud, schemas
 from app.database import SessionLocal
-from app.models import File  # ← IMPORT THIS
-from fastapi.responses import FileResponse
+from app.models import File
+from app.utils import THUMB_DIR, THUMB_W, THUMB_H
 import os
 import mimetypes
+from urllib.parse import quote
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
@@ -60,6 +61,22 @@ def merge_persons(person_id: int, into_id: int, db: Session = Depends(get_db)):
 @router.get("/persons/{person_id}/photos", response_model=List[schemas.FileResponse])
 def get_person_photos(person_id: int, db: Session = Depends(get_db)):
     return crud.get_person_photos(db, person_id)
+
+
+@router.post("/persons/auto-merge")
+def auto_merge_persons(
+    background_tasks: BackgroundTasks,
+    threshold: float = Query(default=0.60, ge=0.50, le=0.95),
+    db: Session = Depends(get_db),
+):
+    """
+    Automatically merge unnamed 'Person N' records into named persons if
+    their face embeddings are similar enough (controlled by `threshold`).
+    Runs synchronously and returns a summary.
+    """
+    result = crud.auto_merge_unknown_persons(db, sim_threshold=threshold)
+    return result
+
 
 
 # ── File endpoints ─────────────────────────────────────────────────────────────
@@ -229,6 +246,14 @@ def update_face(face_id: int, body: schemas.FilePersonAdd, db: Session = Depends
     return result
 
 
+@router.get("/{file_id}", response_model=schemas.FileResponse)
+def get_file(file_id: int, db: Session = Depends(get_db)):
+    db_file = crud.get_file_by_id(db, file_id)
+    if not db_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    return db_file
+
+
 # ── Generic file endpoints ─────────────────────────────────────────────────────
 
 @router.patch("/{file_id}", response_model=schemas.FileResponse)
@@ -261,22 +286,50 @@ def list_all_files_debug(db: Session = Depends(get_db)):
     }
 
 
-@router.get("/", response_model=List[schemas.FileResponse])
-def list_files(background_tasks: BackgroundTasks, skip: int = 0, limit: int = 10000, db: Session = Depends(get_db)):
+@router.get("/metadata", response_model=schemas.FilterMetadataResponse)
+def get_metadata(db: Session = Depends(get_db)):
+    return crud.get_filter_metadata(db)
+
+
+@router.get("/", response_model=schemas.PaginatedFileResponse)
+def list_files(
+    background_tasks: BackgroundTasks, 
+    skip: int = 0, 
+    limit: int = 100, 
+    category: str = None,
+    scenario: str = None,
+    person_id: int = None,
+    album: str = None,
+    db: Session = Depends(get_db)
+):
     folder_configs = crud.get_scan_folders(db)
-    valid_folders = [fc.path for fc in folder_configs if fc.path and os.path.isdir(fc.path)]
+    # Use all configured folder paths, even if they aren't currently accessible
+    # (e.g. external drive disconnected), so we can still see the cached metadata/thumbnails.
+    target_folders = [fc.path for fc in folder_configs if fc.path]
 
-    if not valid_folders:
-        return []
 
-    files = crud.get_files(db, folder_paths=valid_folders, skip=skip, limit=limit)
-    if not files and skip == 0:
+
+    if not target_folders:
+        return {"items": [], "total": 0}
+
+    items, total = crud.get_files(
+        db, 
+        folder_paths=None, 
+        skip=skip, 
+        limit=limit,
+        category=category,
+        scenario=scenario,
+        person_id=person_id,
+        album=album
+    )
+    if not items and skip == 0 and total == 0:
         def run_bg_initial_scan():
             import traceback
             bg_db = SessionLocal()
             try:
                 print("[bg_scan] Starting initial background scan...")
-                for fp in valid_folders:
+                # Use target_folders which we defined earlier
+                for fp in target_folders:
                     crud.scan_and_tag_folder(bg_db, fp)
                 crud.cleanup_orphaned_persons(bg_db)
                 print("[bg_scan] Initial background scan completed.")
@@ -288,16 +341,11 @@ def list_files(background_tasks: BackgroundTasks, skip: int = 0, limit: int = 10
         
         background_tasks.add_task(run_bg_initial_scan)
         
-    return files
+    return {"items": items, "total": total}
 
 
 # Move thumbnails outside the backend directory to avoid uvicorn --reload restarts
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-THUMB_DIR = os.path.join(PROJECT_ROOT, 'data', 'thumbnails')
-os.makedirs(THUMB_DIR, exist_ok=True)
-
-THUMB_W = 400
-THUMB_H = 340
+# (Constants imported from app.utils)
 
 
 @router.get("/{file_id}/thumbnail")
@@ -411,15 +459,11 @@ def get_file_content(file_id: int, db: Session = Depends(get_db)):
     
     media_type = media_type_map.get(ext, 'application/octet-stream')
     
-    # Return with appropriate headers for video streaming
+    # Return using FastAPI's built-in FileResponse which handles headers correctly
     return FileResponse(
         file.path, 
         media_type=media_type,
-        headers={
-            "Accept-Ranges": "bytes",
-            "Cache-Control": "no-cache",
-            "Content-Disposition": f"inline; filename*=UTF-8''{os.path.basename(file.path)}"
-        }
+        filename=os.path.basename(file.path)
     )
 
 @router.get("/{file_id}/stream")

@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import '../styles/PhotoCard.css'
 
-const API = 'http://localhost:8000/files'
+const API = `http://${window.location.hostname}:8000/files`
 
-function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
+function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
   const [imageError, setImageError] = useState(false)
   const [videoError, setVideoError] = useState(false)
 
@@ -13,6 +13,9 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
   const [selectedPersonForAdd, setSelectedPersonForAdd] = useState('')
   const [customPersonLabel, setCustomPersonLabel] = useState('')
   const [selectedFace, setSelectedFace] = useState(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [selectedMergeTarget, setSelectedMergeTarget] = useState('')
+  const [needsRefresh, setNeedsRefresh] = useState(false)
   const [imgAspectRatio, setImgAspectRatio] = useState('auto')
   const [isRescanning, setIsRescanning] = useState(false)
 
@@ -64,8 +67,14 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
       if (!document.fullscreenElement) document.body.classList.remove('video-fullscreen')
     }
     document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.body.classList.remove('video-fullscreen')
   }, [])
+
+  useEffect(() => {
+    if (selectedFace) {
+      setRenameValue(selectedFace.person_name || `Person ${selectedFace.person_id}`)
+    }
+  }, [selectedFace])
 
   // --- Utility ---
 
@@ -146,8 +155,85 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
       setCustomPersonLabel('')
       setSelectedFace(null)
       onPhotoUpdated?.(updatedPhoto)
+      fetchPersons() // Refresh the dropdown list
     } catch (err) {
       console.error('Error adding label:', err)
+    }
+  }
+
+  const fetchPersons = async () => {
+    setLoadingPersons(true)
+    try {
+      const res = await fetch(`${API}/persons`)
+      const data = await res.json()
+      setPersonsList(data)
+    } catch (err) {
+      console.error('Error fetching persons:', err)
+    } finally {
+      setLoadingPersons(false)
+    }
+  }
+
+  const handleRenamePerson = async (personId) => {
+    const newName = renameValue.trim()
+    if (!newName || newName === (selectedFace.person_name || `Person ${selectedFace.person_id}`)) return
+
+    try {
+      const response = await fetch(`${API}/persons/${personId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: newName })
+      })
+
+      if (response.ok) {
+        setNeedsRefresh(true)
+        const updatedFileResponse = await fetch(`${API}/${photo.id}`)
+        if (updatedFileResponse.ok) {
+          const updatedFile = await updatedFileResponse.json()
+          onPhotoUpdated?.(updatedFile)
+        }
+        fetchPersons()
+        setSelectedFace(null)
+      } else {
+        const err = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        const errorMsg = typeof err.detail === 'object' ? JSON.stringify(err.detail) : err.detail
+        alert(`Rename failed: ${errorMsg}`)
+      }
+    } catch (err) {
+      console.error('Rename error:', err)
+      alert('Network error while renaming')
+    }
+  }
+
+  const handleMergePerson = async (personId) => {
+    if (!selectedMergeTarget) return
+    if (Number(selectedMergeTarget) === personId) return
+
+    if (!confirm(`Are you sure you want to merge this person into the selected one? This action cannot be undone.`)) return
+
+    try {
+      const response = await fetch(`${API}/persons/${personId}/merge/${selectedMergeTarget}`, {
+        method: 'POST'
+      })
+
+      if (response.ok) {
+        setNeedsRefresh(true)
+        const updatedFileResponse = await fetch(`${API}/${photo.id}`)
+        if (updatedFileResponse.ok) {
+          const updatedFile = await updatedFileResponse.json()
+          onPhotoUpdated?.(updatedFile)
+        }
+        fetchPersons()
+        setSelectedMergeTarget('')
+        setSelectedFace(null)
+      } else {
+        const err = await response.json().catch(() => ({ detail: 'Unknown error' }))
+        const errorMsg = typeof err.detail === 'object' ? JSON.stringify(err.detail) : err.detail
+        alert(`Merge failed: ${errorMsg}`)
+      }
+    } catch (err) {
+      console.error('Merge error:', err)
+      alert('Network error while merging')
     }
   }
 
@@ -168,6 +254,21 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
     }
   }
 
+  const handleCategoryChange = async (newCategory) => {
+    try {
+      const response = await fetch(`${API}/${photo.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: newCategory || null })
+      })
+      if (!response.ok) throw new Error('Failed to update category')
+      const updatedPhoto = await response.json()
+      onPhotoUpdated?.(updatedPhoto)
+    } catch (err) {
+      console.error('Error updating category:', err)
+    }
+  }
+
   const handleCardVideoClick = (e) => {
     e.stopPropagation()
     if (cardVideoRef.current) {
@@ -181,12 +282,7 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
     if (dialogRef.current) {
       dialogRef.current.showModal()
       if (personsList.length === 0 && !loadingPersons) {
-        setLoadingPersons(true)
-        fetch(`${API}/persons`)
-          .then(res => res.ok ? res.json() : [])
-          .then(data => setPersonsList(Array.isArray(data) ? data : []))
-          .catch(console.error)
-          .finally(() => setLoadingPersons(false))
+        fetchPersons()
       }
     }
   }
@@ -203,6 +299,10 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
     setTimeout(() => {
       dialog.classList.remove('closing')
       dialog.close()
+      if (needsRefresh) {
+        onRefresh?.()
+        setNeedsRefresh(false)
+      }
     }, 280)
   }
 
@@ -415,7 +515,28 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
               {/* Category */}
               <div className="detail-item">
                 <span className="label">Category</span>
-                <span className="value">{photo.category || '—'}</span>
+                <select
+                  className="value"
+                  value={photo.category || ''}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    color: 'var(--text-main)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    borderRadius: '4px',
+                    padding: '0.2rem 0.5rem',
+                    fontSize: '0.85rem',
+                    outline: 'none',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <option value="">—</option>
+                  {[
+                    "selfie", "group photo", "family photo", "birthday", "wedding", "party", "graduation", "holiday", "travel", "nature", "cityscape", "beach", "indoor", "food", "pet", "car", "screenshot", "document", "anime", "artwork", "meme", "video"
+                  ].sort().map(cat => (
+                    <option key={cat} value={cat}>{cat}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Description */}
@@ -463,9 +584,109 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef }) {
                 <span className="label">
                   {selectedFace ? `Relabel Target Face` : 'Tag a person'}
                 </span>
-                {selectedFace && (
-                  <div style={{ fontSize: '0.8rem', color: 'var(--accent)', marginBottom: '0.4rem', background: 'rgba(232, 213, 176, 0.1)', padding: '0.3rem 0.6rem', borderRadius: '4px' }}>
-                    Updating: {selectedFace.person_name || `Person ${selectedFace.person_id}`}
+                {selectedFace && selectedFace.person_id && (
+                  <div style={{ 
+                    fontSize: '0.8rem', 
+                    color: 'var(--accent)', 
+                    marginBottom: '0.8rem', 
+                    background: 'var(--bg-surface-2)', 
+                    padding: '0.8rem 1rem', 
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--glass-border)'
+                  }}>
+                    <div style={{ marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Rename or Merge Target
+                    </div>
+                    
+                    {/* Rename Option */}
+                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                      <input 
+                        type="text" 
+                        value={renameValue}
+                        onChange={e => setRenameValue(e.target.value)}
+                        placeholder="New name..."
+                        style={{ 
+                          flex: 1, 
+                          padding: '0.5rem 0.75rem', 
+                          fontSize: '0.85rem', 
+                          borderRadius: 'var(--radius-sm)', 
+                          border: '1px solid var(--glass-border)', 
+                          backgroundColor: 'var(--bg-deep)', 
+                          color: 'var(--text-primary)',
+                          outline: 'none',
+                          boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
+                        }}
+                      />
+                      <button 
+                        type="button"
+                        className="rename-btn"
+                        onClick={() => handleRenamePerson(selectedFace.person_id)}
+                        style={{ 
+                          background: 'var(--accent)', 
+                          color: '#111', 
+                          border: 'none', 
+                          borderRadius: 'var(--radius-sm)', 
+                          padding: '0.5rem 0.9rem', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          boxShadow: '0 4px 12px var(--accent-glow)'
+                        }}
+                      >
+                        Save
+                      </button>
+                    </div>
+
+                    <div style={{ height: '1px', background: 'var(--glass-border)', margin: '0.8rem 0' }} />
+
+                    {/* Merge Dropdown Option */}
+                    <div style={{ marginBottom: '0.4rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Merge with Existing
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <select
+                        value={selectedMergeTarget}
+                        onChange={e => setSelectedMergeTarget(e.target.value)}
+                        style={{
+                          flex: 1,
+                          padding: '0.5rem 0.75rem',
+                          fontSize: '0.85rem',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--glass-border)',
+                          backgroundColor: 'var(--bg-deep)',
+                          color: 'var(--text-primary)',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          appearance: 'auto'
+                        }}
+                      >
+                        <option value="">Select person...</option>
+                        {personsList
+                          .filter(p => p.id !== selectedFace.person_id)
+                          .map(p => (
+                            <option key={p.id} value={p.id}>{p.name}</option>
+                          ))
+                        }
+                      </select>
+                      <button 
+                        type="button"
+                        onClick={() => handleMergePerson(selectedFace.person_id)}
+                        disabled={!selectedMergeTarget}
+                        style={{ 
+                          background: 'var(--bg-mid)', 
+                          color: 'var(--accent)', 
+                          border: '1px solid var(--accent)', 
+                          borderRadius: 'var(--radius-sm)', 
+                          padding: '0.5rem 0.9rem', 
+                          fontSize: '0.75rem', 
+                          fontWeight: 500,
+                          cursor: 'pointer',
+                          opacity: selectedMergeTarget ? 1 : 0.4
+                        }}
+                      >
+                        Merge
+                      </button>
+                    </div>
                   </div>
                 )}
                 <div className="add-label-section">

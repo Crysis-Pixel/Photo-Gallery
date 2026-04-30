@@ -94,5 +94,15 @@ class PersonUpdate(BaseModel):
 class PersonResponse(PersonBase):
     id: int
     color: Optional[str] = None
+    cover_photo_id: Optional[int] = None
  
 _apply_orm_mode(PersonResponse)
+
+class PaginatedFileResponse(BaseModel):
+    items: List[FileResponse]
+    total: int
+
+class FilterMetadataResponse(BaseModel):
+    categories: List[str]
+    scenarios: List[str]
+    albums: List[str]

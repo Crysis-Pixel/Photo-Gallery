@@ -283,3 +283,61 @@
   flex-shrink: 0;
   margin-top: 1px;
 }
+
+/* ── Merge People You Know button ── */
+.merge-people-btn {
+  width: 100%;
+  background: linear-gradient(135deg, rgba(232, 213, 176, 0.13), rgba(232, 213, 176, 0.05));
+  border: 1px solid rgba(232, 213, 176, 0.32);
+  color: var(--accent);
+  padding: 0.8rem 1.25rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  transition: all 0.25s ease;
+  margin-bottom: 0.6rem;
+  letter-spacing: 0.01em;
+}
+
+.merge-people-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(232, 213, 176, 0.22), rgba(232, 213, 176, 0.10));
+  border-color: rgba(232, 213, 176, 0.55);
+  box-shadow: 0 4px 20px rgba(232, 213, 176, 0.12);
+  transform: translateX(3px);
+}
+
+.merge-people-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Merge result summary ── */
+.merge-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  background: rgba(100, 200, 130, 0.08);
+  border: 1px solid rgba(100, 200, 130, 0.25);
+  color: rgba(140, 220, 160, 0.95);
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.83rem;
+  line-height: 1.45;
+  margin-top: 0.25rem;
+  animation: fadeIn 0.35s ease both;
+}
+
+.merge-result strong {
+  color: #a0e8b0;
+  font-weight: 700;
+}
+
+.merge-result-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+  margin-top: 0.05rem;
+}

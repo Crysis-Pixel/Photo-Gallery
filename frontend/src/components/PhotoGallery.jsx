@@ -2,8 +2,9 @@ import { useState, useEffect, useRef, forwardRef, useImperativeHandle, createRef
 import PhotoCard from './PhotoCard'
 import '../styles/PhotoGallery.css'
 
-const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, refreshKey }, ref) {
+const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, refreshKey, onRefresh }, ref) {
   const [photos, setPhotos] = useState([])
+  const [totalPhotos, setTotalPhotos] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filterCategory, setFilterCategory] = useState('')
@@ -12,9 +13,12 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [filterAlbum, setFilterAlbum] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
 
+  const [categories, setCategories] = useState([])
+  const [scenarios, setScenarios] = useState([])
+  const [albums, setAlbums] = useState([])
+
   const persons = personsProp || []
 
-  // Refs for scrolling
   const cardRefs = useRef({})
 
   useEffect(() => {
@@ -25,9 +29,9 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     })
   }, [photos])
 
-  useEffect(() => {
-    setCurrentPage(1)
-  }, [filterCategory, filterScenario, filterPerson, filterAlbum])
+  // ✅ REMOVED the separate useEffect that reset currentPage on filter change.
+  // Page is now reset inline in each filter's onChange handler so the fetch
+  // useEffect always sees currentPage=1 when a filter changes.
 
   useImperativeHandle(ref, () => ({
     scrollToPhoto: (photoId) => {
@@ -35,6 +39,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
       setFilterScenario('')
       setFilterPerson('')
       setFilterAlbum('')
+      setCurrentPage(1)
 
       setTimeout(() => {
         const cardRef = cardRefs.current[photoId]
@@ -46,23 +51,55 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
         }
       }, 100)
     },
-    refresh: async () => {          // ← NEW
+    refresh: async () => {
       await fetchPhotos()
     }
   }))
 
-  // Data fetching
   useEffect(() => {
-    fetchPhotos()
+    fetchMetadata()
+  }, [])
+
+  useEffect(() => {
+    // If only refreshKey changed, do a silent fetch to avoid unmounting modals
+    const isOnlyRefresh = refreshKey > 0
+    fetchPhotos(isOnlyRefresh)
   }, [refreshKey])
 
-  const fetchPhotos = async () => {
+  useEffect(() => {
+    fetchPhotos(false) // Normal fetch for filter/page changes
+  }, [currentPage, filterCategory, filterScenario, filterPerson, filterAlbum])
+
+  const fetchMetadata = async () => {
     try {
-      setLoading(true)
-      const response = await fetch('http://localhost:8000/files/')
+      const response = await fetch(`http://${window.location.hostname}:8000/files/metadata`)
+      if (response.ok) {
+        const data = await response.json()
+        setCategories(data.categories || [])
+        setScenarios(data.scenarios || [])
+        setAlbums(data.albums || [])
+      }
+    } catch (err) {
+      console.error('Failed to fetch metadata:', err)
+    }
+  }
+
+  const fetchPhotos = async (silent = false) => {
+    try {
+      if (!silent) setLoading(true)
+      const params = new URLSearchParams()
+      params.append('skip', (currentPage - 1) * 100)
+      params.append('limit', 100)
+      if (filterCategory) params.append('category', filterCategory)
+      if (filterScenario) params.append('scenario', filterScenario)
+      if (filterPerson) params.append('person_id', filterPerson)
+      if (filterAlbum) params.append('album', filterAlbum)
+
+      const response = await fetch(`http://${window.location.hostname}:8000/files/?${params.toString()}`)
       if (!response.ok) throw new Error('Failed to fetch photos')
       const data = await response.json()
-      setPhotos(data)
+      setPhotos(data.items || [])
+      setTotalPhotos(data.total || 0)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -71,30 +108,12 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   }
 
   const handlePhotoUpdated = (updatedPhoto) => {
-    setPhotos(prev => prev.map(p => p.id === updatedPhoto.id ? updatedPhoto : p));
+    setPhotos(prev => prev.map(p => p.id === updatedPhoto.id ? updatedPhoto : p))
   }
 
-  const getUniqueCategories = () => Array.from(new Set(photos.map(p => p.category).filter(Boolean))).sort()
-  const getUniqueScenarios = () => Array.from(new Set(photos.map(p => p.scenario).filter(Boolean)))
-
-  const getAlbumName = (path) => {
-    if (!path) return 'Unknown'
-    const parts = path.split(/[\\/]/)
-    return parts.length > 1 ? parts[parts.length - 2] : 'Unknown'
-  }
-  const getUniqueAlbums = () => Array.from(new Set(photos.map(p => getAlbumName(p.path)))).sort()
-
-  const filteredPhotos = photos.filter(photo => {
-    const categoryMatch = !filterCategory || photo.category === filterCategory
-    const scenarioMatch = !filterScenario || photo.scenario === filterScenario
-    const personMatch = !filterPerson || (Array.isArray(photo.person_ids) && photo.person_ids.includes(Number(filterPerson)))
-    const albumMatch = !filterAlbum || getAlbumName(photo.path) === filterAlbum
-    return categoryMatch && scenarioMatch && personMatch && albumMatch
-  })
-
-  const ITEMS_PER_PAGE = 100;
-  const totalPages = Math.ceil(filteredPhotos.length / ITEMS_PER_PAGE);
-  const paginatedPhotos = filteredPhotos.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+  const ITEMS_PER_PAGE = 100
+  const totalPages = Math.ceil(totalPhotos / ITEMS_PER_PAGE)
+  const paginatedPhotos = photos
 
   if (error) {
     return <div className="gallery-container"><div className="error-message">Error: {error}</div></div>
@@ -106,30 +125,42 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
       <div className="filters">
         <div className="filter-group">
           <label>Category:</label>
-          <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
+          <select
+            value={filterCategory}
+            onChange={e => { setCurrentPage(1); setFilterCategory(e.target.value) }}
+          >
             <option value="">All Categories</option>
-            {getUniqueCategories().map(c => <option key={c} value={c}>{c}</option>)}
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
         <div className="filter-group">
           <label>Person:</label>
-          <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)}>
+          <select
+            value={filterPerson}
+            onChange={e => { setCurrentPage(1); setFilterPerson(e.target.value) }}
+          >
             <option value="">All Persons</option>
             {persons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div className="filter-group">
           <label>Scenario:</label>
-          <select value={filterScenario} onChange={e => setFilterScenario(e.target.value)}>
+          <select
+            value={filterScenario}
+            onChange={e => { setCurrentPage(1); setFilterScenario(e.target.value) }}
+          >
             <option value="">All Scenarios</option>
-            {getUniqueScenarios().map(s => <option key={s} value={s}>{s}</option>)}
+            {scenarios.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
         </div>
         <div className="filter-group">
           <label>Album:</label>
-          <select value={filterAlbum} onChange={e => setFilterAlbum(e.target.value)}>
+          <select
+            value={filterAlbum}
+            onChange={e => { setCurrentPage(1); setFilterAlbum(e.target.value) }}
+          >
             <option value="">All Albums</option>
-            {getUniqueAlbums().map(a => <option key={a} value={a}>{a}</option>)}
+            {albums.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         </div>
         <button className="refresh-btn" onClick={fetchPhotos}>Refresh</button>
@@ -139,11 +170,14 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
         <div className="loading">Loading photos...</div>
       ) : (
         <>
-          <div className="photo-count" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-            <span>Showing {paginatedPhotos.length} of {filteredPhotos.length} photos</span>
+          <div
+            className="photo-count"
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}
+          >
+            <span>Showing {paginatedPhotos.length} of {totalPhotos} photos</span>
             {totalPages > 1 && (
               <div className="pagination-controls">
-                <button 
+                <button
                   className="pagination-btn"
                   onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
@@ -152,7 +186,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                 </button>
                 <div className="pagination-select-wrapper">
                   <span>Page</span>
-                  <select 
+                  <select
                     className="page-select"
                     value={currentPage}
                     onChange={e => setCurrentPage(Number(e.target.value))}
@@ -163,7 +197,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                   </select>
                   <span>of {totalPages}</span>
                 </div>
-                <button 
+                <button
                   className="pagination-btn"
                   onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                   disabled={currentPage === totalPages}
@@ -173,6 +207,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
               </div>
             )}
           </div>
+
           <div className="gallery-grid">
             {paginatedPhotos.length > 0 ? (
               paginatedPhotos.map(photo => (
@@ -181,6 +216,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                   photo={photo}
                   cardRef={cardRefs.current[photo.id]}
                   onPhotoUpdated={handlePhotoUpdated}
+                  onRefresh={onRefresh}
                 />
               ))
             ) : (

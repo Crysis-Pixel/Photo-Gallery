@@ -42,6 +42,7 @@ function App() {
           persons={persons}
           ref={photoGalleryRef}
           refreshKey={refreshKey}
+          onRefresh={refreshAll}
         />
       </main>
     </div>
