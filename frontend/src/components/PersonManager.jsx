@@ -289,6 +289,14 @@ const cancelDeletePerson = () => {
 
   const cancelMerge = () => setMergeSource(null)
 
+  const sortedPersons = [...persons].sort((a, b) => {
+    const aIsUnnamed = a.name.startsWith('Person ');
+    const bIsUnnamed = b.name.startsWith('Person ');
+    if (aIsUnnamed && !bIsUnnamed) return 1;
+    if (!aIsUnnamed && bIsUnnamed) return -1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
+
   return (
     <section className="pm-root">
       <div className="pm-header">
@@ -316,7 +324,7 @@ const cancelDeletePerson = () => {
         onPointerCancel={stopGridDrag}
         onPointerLeave={stopGridDrag}
       >
-        {persons.map(person => {
+        {sortedPersons.map(person => {
           const isSource = mergeSource === person.id
           const isExpanded = expandedId === person.id
           const personPhotos = photos[person.id] || []

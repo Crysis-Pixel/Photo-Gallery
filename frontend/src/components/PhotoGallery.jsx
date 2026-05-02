@@ -18,6 +18,13 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [albums, setAlbums] = useState([])
 
   const persons = personsProp || []
+  const sortedPersons = [...persons].sort((a, b) => {
+    const aIsUnnamed = a.name.startsWith('Person ');
+    const bIsUnnamed = b.name.startsWith('Person ');
+    if (aIsUnnamed && !bIsUnnamed) return 1;
+    if (!aIsUnnamed && bIsUnnamed) return -1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  });
 
   const cardRefs = useRef({})
 
@@ -140,7 +147,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
             onChange={e => { setCurrentPage(1); setFilterPerson(e.target.value) }}
           >
             <option value="">All Persons</option>
-            {persons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            {sortedPersons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
         <div className="filter-group">

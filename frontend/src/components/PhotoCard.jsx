@@ -108,6 +108,16 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
       hour: '2-digit', minute: '2-digit'
     })
 
+  const getSortedPersons = () => {
+    return [...personsList].sort((a, b) => {
+      const aIsUnnamed = a.name.startsWith('Person ');
+      const bIsUnnamed = b.name.startsWith('Person ');
+      if (aIsUnnamed && !bIsUnnamed) return 1;
+      if (!aIsUnnamed && bIsUnnamed) return -1;
+      return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  }
+
   // --- Handlers ---
 
   const handleClearPersonTag = async (personId, event) => {
@@ -668,7 +678,7 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
                           }}
                         >
                           <option value="">Select person...</option>
-                          {personsList
+                          {getSortedPersons()
                             .filter(p => p.id !== selectedFace.person_id)
                             .map(p => (
                               <option key={p.id} value={p.id}>{p.name}</option>
@@ -703,7 +713,7 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
                         onChange={e => setSelectedPersonForAdd(e.target.value)}
                       >
                         <option value="">{loadingPersons ? 'Loading…' : 'Select person'}</option>
-                        {personsList.map(p => (
+                        {getSortedPersons().map(p => (
                           <option key={p.id} value={p.id}>{p.name}</option>
                         ))}
                         <option value="other">Other…</option>

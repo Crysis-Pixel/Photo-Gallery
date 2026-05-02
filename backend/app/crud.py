@@ -572,13 +572,15 @@ def auto_tag_file(
                 pass
             else:
                 try:
-                    SIM_THRESHOLD = 0.60
+                    SIM_THRESHOLD = 0.55
                     MIN_FACE_RATIO = 0.01
 
                     # Clear existing faces if re-detecting
                     db.query(Face).filter(
                         Face.file_id == db_file.id
                     ).delete(synchronize_session=False)
+                    db.commit()
+                    cleanup_orphaned_persons(db)
 
                     if INSIGHTFACE_AVAILABLE:
                         _tag_faces_insightface(
@@ -666,27 +668,42 @@ def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
             best_sim = -1.0
             best_person = None
             for person in persons:
-                # Avoid double-tagging the same person in one photo
                 if person.id in used_person_ids:
                     continue
+                
                 sim = best_similarity(person, emb)
-                if sim > best_sim:
-                    best_sim = sim
+                
+                # Bonus for named persons to prefer them over unnamed duplicates
+                effective_sim = sim
+                if person.name and not person.name.startswith("Person "):
+                    effective_sim += 0.05
+                
+                if effective_sim > best_sim:
+                    best_sim = effective_sim
                     best_person = person
 
-            if best_sim >= SIM_THRESHOLD and best_person is not None:
-                matched_person = best_person
-                update_person_encoding(matched_person, emb)
-                db.add(matched_person)
-                print(f"[insightface-match] file={os.path.basename(db_file.path)} "
-                      f"person={matched_person.name} sim={best_sim:.4f}")
+            # Check if match meets threshold (using raw similarity for validity)
+            if best_person is not None:
+                actual_sim = best_similarity(best_person, emb)
+                if actual_sim >= SIM_THRESHOLD:
+                    matched_person = best_person
+                    update_person_encoding(matched_person, emb)
+                    db.add(matched_person)
+                    print(f"[insightface-match] file={os.path.basename(db_file.path)} "
+                          f"person={matched_person.name} sim={actual_sim:.4f}")
+                else:
+                    matched_person = _create_new_person(db, emb)
+                    if matched_person is None:
+                        continue
+                    persons.append(matched_person)
+                    print(f"[insightface-new] file={os.path.basename(db_file.path)} "
+                          f"created Person {matched_person.id} sim_to_best={actual_sim:.4f}")
             else:
                 matched_person = _create_new_person(db, emb)
                 if matched_person is None:
                     continue
                 persons.append(matched_person)
-                print(f"[insightface-new] file={os.path.basename(db_file.path)} "
-                      f"created Person {matched_person.id} sim_to_best={best_sim:.4f}")
+                print(f"[insightface-new] file={os.path.basename(db_file.path)} created new person")
 
             face_row = Face(
                 file_id=db_file.id, 
