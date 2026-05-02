@@ -70,6 +70,31 @@ class Person(Base):
     sample_encodings = Column(Text, nullable=True)  # JSON list of up to 5 embeddings
     faces = relationship("Face", back_populates="person")
 
+    _parsed_encodings = None
+    _last_encoding = None
+    _last_sample_encodings = None
+
+    def get_parsed_encodings(self):
+        import json
+        import numpy as np
+        if self._parsed_encodings is None or self.encoding != self._last_encoding or self.sample_encodings != self._last_sample_encodings:
+            encs = []
+            if self.encoding:
+                try:
+                    encs.append(np.array(json.loads(self.encoding), dtype=np.float32))
+                except Exception:
+                    pass
+            if self.sample_encodings:
+                try:
+                    for s in json.loads(self.sample_encodings)[:5]:
+                        encs.append(np.array(s, dtype=np.float32))
+                except Exception:
+                    pass
+            self._parsed_encodings = encs
+            self._last_encoding = self.encoding
+            self._last_sample_encodings = self.sample_encodings
+        return self._parsed_encodings
+
 
 class Face(Base):
     __tablename__ = "faces"

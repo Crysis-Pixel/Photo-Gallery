@@ -58,9 +58,15 @@ def merge_persons(person_id: int, into_id: int, db: Session = Depends(get_db)):
     return result
 
 
-@router.get("/persons/{person_id}/photos", response_model=List[schemas.FileResponse])
-def get_person_photos(person_id: int, db: Session = Depends(get_db)):
-    return crud.get_person_photos(db, person_id)
+@router.get("/persons/{person_id}/photos", response_model=schemas.PaginatedFileResponse)
+def get_person_photos(
+    person_id: int, 
+    limit: int = 8, 
+    offset: int = 0, 
+    randomize: bool = Query(default=True),
+    db: Session = Depends(get_db)
+):
+    return crud.get_person_photos(db, person_id, limit=limit, offset=offset, randomize=randomize)
 
 
 @router.post("/persons/auto-merge")
@@ -246,6 +252,23 @@ def update_face(face_id: int, body: schemas.FilePersonAdd, db: Session = Depends
     return result
 
 
+@router.get("/metadata", response_model=schemas.FilterMetadataResponse)
+def get_metadata(db: Session = Depends(get_db)):
+    return crud.get_filter_metadata(db)
+
+
+@router.get("/debug-all")
+def list_all_files_debug(db: Session = Depends(get_db)):
+    from app.models import File
+    all_files = db.query(File).all()
+    folders = crud.get_scan_folders(db)
+    return {
+        "folder_configs": [f.path for f in folders],
+        "total_files_in_db": len(all_files),
+        "sample_paths": [f.path for f in all_files[:3]],
+    }
+
+
 @router.get("/{file_id}", response_model=schemas.FileResponse)
 def get_file(file_id: int, db: Session = Depends(get_db)):
     db_file = crud.get_file_by_id(db, file_id)
@@ -274,21 +297,6 @@ def rescan_file(file_id: int, db: Session = Depends(get_db)):
     return updated_file
 
 
-@router.get("/debug-all")
-def list_all_files_debug(db: Session = Depends(get_db)):
-    from app.models import File
-    all_files = db.query(File).all()
-    folders = crud.get_scan_folders(db)
-    return {
-        "folder_configs": [f.path for f in folders],
-        "total_files_in_db": len(all_files),
-        "sample_paths": [f.path for f in all_files[:3]],
-    }
-
-
-@router.get("/metadata", response_model=schemas.FilterMetadataResponse)
-def get_metadata(db: Session = Depends(get_db)):
-    return crud.get_filter_metadata(db)
 
 
 @router.get("/", response_model=schemas.PaginatedFileResponse)
@@ -373,9 +381,13 @@ def get_thumbnail(file_id: int, db: Session = Depends(get_db)):
         if ext in video_exts:
             # Extract a frame from the video using OpenCV
             import cv2
+            from app.utils import get_video_meta
+            from PIL import Image, ImageOps
             cap = cv2.VideoCapture(file.path)
-            # Read rotation metadata before seeking
-            rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META) or 0)
+            
+            # Use ffprobe to check for mirroring/rotation that OpenCV might miss
+            _, mirror = get_video_meta(file.path)
+
             # Seek to ~1 second in
             cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
             ret, frame = cap.read()
@@ -383,22 +395,19 @@ def get_thumbnail(file_id: int, db: Session = Depends(get_db)):
             if not ret:
                 # Try frame 0 if 1s fails
                 cap = cv2.VideoCapture(file.path)
-                rotation = int(cap.get(cv2.CAP_PROP_ORIENTATION_META) or 0)
                 ret, frame = cap.read()
                 cap.release()
             if not ret:
                 raise RuntimeError("Could not extract video frame")
+            
             # Convert BGR -> RGB then to PIL
-            from PIL import Image, ImageOps
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
-            # Apply video rotation metadata (same issue as EXIF on photos)
-            if rotation == 90:
-                img = img.rotate(-90, expand=True)
-            elif rotation == 180:
-                img = img.rotate(180, expand=True)
-            elif rotation == 270:
-                img = img.rotate(90, expand=True)
+            
+            # Apply mirroring if detected (common in iPhone selfie videos)
+            if mirror:
+                img = ImageOps.mirror(img)
+
         else:
             from PIL import Image, ImageOps
             img = Image.open(file.path)
@@ -416,7 +425,12 @@ def get_thumbnail(file_id: int, db: Session = Depends(get_db)):
 
     except Exception as e:
         print(f"Thumbnail generation failed for {file_id}: {e}")
-        # Fall back to full content
+        # Only fall back to full content for images. 
+        # For videos, the full content is not a valid image/thumbnail.
+        if ext in video_exts:
+            raise HTTPException(status_code=500, detail="Failed to generate video thumbnail")
+        
+        # Fall back to full content for images
         from fastapi.responses import RedirectResponse
         return RedirectResponse(url=f"/files/{file_id}/content")
 

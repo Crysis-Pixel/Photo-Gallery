@@ -88,8 +88,8 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     try {
       if (!silent) setLoading(true)
       const params = new URLSearchParams()
-      params.append('skip', (currentPage - 1) * 100)
-      params.append('limit', 100)
+      params.append('skip', (currentPage - 1) * 52)
+      params.append('limit', 52)
       if (filterCategory) params.append('category', filterCategory)
       if (filterScenario) params.append('scenario', filterScenario)
       if (filterPerson) params.append('person_id', filterPerson)
@@ -111,7 +111,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     setPhotos(prev => prev.map(p => p.id === updatedPhoto.id ? updatedPhoto : p))
   }
 
-  const ITEMS_PER_PAGE = 100
+  const ITEMS_PER_PAGE = 52
   const totalPages = Math.ceil(totalPhotos / ITEMS_PER_PAGE)
   const paginatedPhotos = photos
 

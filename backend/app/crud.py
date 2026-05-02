@@ -135,7 +135,13 @@ def generate_thumbnail(db_file: File) -> bool:
         if ext in video_exts:
             try:
                 import cv2
+                from app.utils import get_video_meta
                 cap = cv2.VideoCapture(db_file.path)
+                
+                # Use ffprobe to check for mirroring/rotation that OpenCV might miss
+                _, mirror = get_video_meta(db_file.path)
+
+                # Seek to ~1 second in
                 cap.set(cv2.CAP_PROP_POS_MSEC, 1000)
                 ret, frame = cap.read()
                 if not ret:
@@ -144,11 +150,24 @@ def generate_thumbnail(db_file: File) -> bool:
                 cap.release()
                 if not ret:
                     return False
+                
+                # Convert BGR -> RGB then to PIL
+                from PIL import Image, ImageOps
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 img = Image.fromarray(frame_rgb)
-            except Exception:
+                
+                # Apply mirroring if detected (common in iPhone selfie videos)
+                if mirror:
+                    img = ImageOps.mirror(img)
+                
+                # Rotation is typically handled automatically by modern OpenCV/FFmpeg backends.
+                # Manual rotation here was causing "double rotation."
+
+            except Exception as ve:
+                print(f"[thumbnail-gen] Video frame extract failed for {db_file.path}: {ve}")
                 return False
         else:
+            from PIL import Image, ImageOps
             img = Image.open(db_file.path)
             img = ImageOps.exif_transpose(img)
             img = img.convert("RGB")
@@ -205,21 +224,8 @@ def sanitize_description(text: str) -> str:
 # ── Embedding helpers ──────────────────────────────────────────────────────────
 
 def best_similarity(person: Person, emb) -> float:
-    encodings_to_check = []
-    if person.encoding:
-        try:
-            encodings_to_check.append(np.array(json.loads(person.encoding), dtype=np.float32))
-        except Exception:
-            pass
-    if person.sample_encodings:
-        try:
-            for s in json.loads(person.sample_encodings)[:5]:
-                encodings_to_check.append(np.array(s, dtype=np.float32))
-        except Exception:
-            pass
-
     best = -1.0
-    for enc in encodings_to_check:
+    for enc in person.get_parsed_encodings():
         if enc.shape != emb.shape:
             continue
         denom = float(np.linalg.norm(enc)) * float(np.linalg.norm(emb))
@@ -407,10 +413,13 @@ def batch_auto_tag_files(
             face_start = time_module.time()
             face_count = 0
             
-            for face_idx, (db_file, img) in enumerate(zip(valid_batch, valid_images)):
+            # Phase 1: Determine which images need face detection
+            files_to_process = []
+            images_to_process = []
+            
+            for db_file, img in zip(valid_batch, valid_images):
                 try:
                     # Pre-generate thumbnail while we have the image in memory (if it's a photo)
-                    # Note: generate_thumbnail handles checking if it already exists
                     generate_thumbnail(db_file)
 
                     # Check if faces are already tagged
@@ -423,24 +432,45 @@ def batch_auto_tag_files(
                     if db_file.category in ["anime", "meme"]:
                         db_file.face_scanned = True
                         continue
+                    
+                    files_to_process.append(db_file)
+                    images_to_process.append(img)
+                except Exception as e:
+                    print(f"[batch face prep error] {db_file.path}: {e}")
 
-                    # Clear existing faces if re-detecting (shouldn't happen with the check above, but for safety)
-                    # db.query(Face).filter(Face.file_id == db_file.id).delete(synchronize_session=False)
+            if files_to_process:
+                faces_results = []
+                
+                if INSIGHTFACE_AVAILABLE:
+                    # Run InsightFace in parallel
+                    def detect_faces(img):
+                        img_np = np.array(img.convert("RGB"))
+                        return face_analyzer.get(img_np)
                     
-                    if INSIGHTFACE_AVAILABLE:
-                        _tag_faces_insightface(db, db_file, img, np, SIM_THRESHOLD, MIN_FACE_RATIO, DET_THRESH=0.3)
-                    elif FACENET_AVAILABLE:
-                        _tag_faces_facenet(db, db_file, img, np, SIM_THRESHOLD)
-                    else:
-                        _tag_faces_mediapipe(db, db_file, img, np)
-                    
-                    db_file.face_scanned = True
-                    face_count += 1
-                except Exception as fe:
-                    print(f"[batch face error] {db_file.path}: {fe}")
-                    # Clear CUDA cache if it's a memory error
-                    if "out of memory" in str(fe).lower():
-                        torch.cuda.empty_cache()
+                    print(f"[batch {batch_num}/{total_batches}] Running face detection on {len(images_to_process)} images...")
+                    with ThreadPoolExecutor(max_workers=min(len(images_to_process), 4)) as executor:
+                        faces_results = list(executor.map(detect_faces, images_to_process))
+                else:
+                    # If using FaceNet or MediaPipe, we don't have a threaded batch implemented here
+                    faces_results = [None] * len(images_to_process)
+
+                # Phase 2: Sequential DB Operations
+                cached_persons = db.query(Person).all()
+                for db_file, img, precomputed_faces in zip(files_to_process, images_to_process, faces_results):
+                    try:
+                        if INSIGHTFACE_AVAILABLE:
+                            _tag_faces_insightface(db, db_file, img, np, SIM_THRESHOLD, MIN_FACE_RATIO, DET_THRESH=0.3, precomputed_faces=precomputed_faces, cached_persons=cached_persons)
+                        elif FACENET_AVAILABLE:
+                            _tag_faces_facenet(db, db_file, img, np, SIM_THRESHOLD)
+                        else:
+                            _tag_faces_mediapipe(db, db_file, img, np)
+                        
+                        db_file.face_scanned = True
+                        face_count += 1
+                    except Exception as fe:
+                        print(f"[batch face error] {db_file.path}: {fe}")
+                        if "out of memory" in str(fe).lower() and device == "cuda":
+                            torch.cuda.empty_cache()
 
         # 5. Save batch
         try:
@@ -583,22 +613,32 @@ def auto_tag_file(
 def _tag_faces_insightface(db: Session, db_file: File, image: Image.Image, np,
                             SIM_THRESHOLD: float = 0.65,
                             MIN_FACE_RATIO: float = 0.01,
-                            DET_THRESH: float = 0.5):
+                            DET_THRESH: float = 0.5,
+                            precomputed_faces=None,
+                            cached_persons=None):
     if not INSIGHTFACE_AVAILABLE:
         db_file.person_name = None
         return
 
     try:
-        img_np = np.array(image.convert("RGB"))
-        height, width = img_np.shape[:2]
+        width, height = image.size
         min_face_area = (width * height) * (MIN_FACE_RATIO ** 2)
 
-        faces = face_analyzer.get(img_np)
+        if precomputed_faces is not None:
+            faces = precomputed_faces
+        else:
+            img_np = np.array(image.convert("RGB"))
+            faces = face_analyzer.get(img_np)
+            
         if not faces:
             db_file.person_name = None
             return
 
-        persons = db.query(Person).all()
+        if cached_persons is not None:
+            persons = cached_persons
+        else:
+            persons = db.query(Person).all()
+            
         used_person_ids = []
         valid_faces = []
 
@@ -994,12 +1034,36 @@ def delete_person(db: Session, person_id: int):
     return True
 
 
-def get_person_photos(db: Session, person_id: int):
-    face_rows = db.query(Face).filter(Face.person_id == person_id).all()
-    file_ids = list({f.file_id for f in face_rows})
-    if not file_ids:
-        return []
-    return db.query(File).filter(File.id.in_(file_ids)).order_by(File.path).all()
+def get_person_photos(db: Session, person_id: int, limit: int = 8, offset: int = 0, randomize: bool = False):
+    # Get total count of unique files for this person
+    total = db.query(Face.file_id).filter(Face.person_id == person_id).distinct().count()
+    
+    if total == 0:
+        return {"items": [], "total": 0}
+        
+    # Get the file IDs
+    query = db.query(Face.file_id).filter(Face.person_id == person_id).distinct()
+    
+    if randomize:
+        from sqlalchemy.sql.expression import func
+        # To randomize properly, we might need a different approach if we want 8 random IDs
+        # But for simplicity, we can order the final File query by random
+        pass
+
+    file_ids_query = db.query(Face.file_id).filter(Face.person_id == person_id).distinct()
+    file_ids = [r[0] for r in file_ids_query.all()]
+    
+    file_query = db.query(File).filter(File.id.in_(file_ids))
+    
+    if randomize:
+        from sqlalchemy.sql.expression import func
+        file_query = file_query.order_by(func.random())
+    else:
+        file_query = file_query.order_by(File.path)
+        
+    items = file_query.offset(offset).limit(limit).all()
+    
+    return {"items": items, "total": total}
 
 
 def auto_merge_unknown_persons(db: Session, sim_threshold: float = 0.60):
@@ -1665,3 +1729,25 @@ def cleanup_orphaned_persons(db: Session):
             db.rollback()
 
     return len(orphaned_ids)
+
+def get_filter_metadata(db):
+    """
+    Returns unique categories, scenarios, and albums found in the database.
+    Used to populate frontend dropdown filters.
+    """
+    from app.models import File
+    categories = [r[0] for r in db.query(File.category).filter(File.category != None, File.category != '').distinct().all()]
+    scenarios = [r[0] for r in db.query(File.scenario).filter(File.scenario != None, File.scenario != '').distinct().all()]
+    
+    all_paths = db.query(File.path).filter(File.path != None).all()
+    albums = set()
+    for (path,) in all_paths:
+        parent = os.path.basename(os.path.dirname(path))
+        if parent:
+            albums.add(parent)
+            
+    return {
+        "categories": sorted(categories),
+        "scenarios": sorted(scenarios),
+        "albums": sorted(list(albums))
+    }

@@ -32,3 +32,36 @@ def get_default_person_color(person_id: Optional[int] = None) -> str:
     v = rng.uniform(0.7, 0.9)
     r, g, b = colorsys.hsv_to_rgb(h, s, v)
     return "#{:02x}{:02x}{:02x}".format(int(r*255), int(g*255), int(b*255))
+
+def get_video_meta(path: str):
+    """Use ffprobe to detect rotation and mirroring metadata."""
+    import subprocess
+    import json
+    cmd = [
+        'ffprobe', '-v', 'error', '-show_entries', 
+        'stream=index:stream_side_data_list:stream_tags=rotate', 
+        '-of', 'json', path
+    ]
+    try:
+        res = subprocess.check_output(cmd)
+        data = json.loads(res)
+        rotation = 0
+        mirror = False
+        
+        for stream in data.get('streams', []):
+            # Check tags
+            tags = stream.get('tags', {})
+            if 'rotate' in tags:
+                rotation = int(tags['rotate'])
+            
+            # Check side data for matrix
+            for sd in stream.get('side_data_list', []):
+                if sd.get('side_data_type') == 'Display Matrix':
+                    rotation = sd.get('rotation', rotation)
+                    matrix = sd.get('displaymatrix', '')
+                    # Check for horizontal mirroring (negative scale in matrix)
+                    if '-' in matrix.split(':')[1].split()[0]:
+                        mirror = True
+        return rotation, mirror
+    except Exception:
+        return 0, False

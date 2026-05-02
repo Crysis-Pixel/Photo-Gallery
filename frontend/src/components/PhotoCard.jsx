@@ -22,6 +22,7 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
   // Video Playback State
   const [isPlaying, setIsPlaying] = useState(false)
   const [showPlayOverlay, setShowPlayOverlay] = useState(true)
+  const [isModalOpen, setIsModalOpen] = useState(false)
 
   // Refs
   const dialogRef = useRef(null)
@@ -272,14 +273,19 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
   const handleCardVideoClick = (e) => {
     e.stopPropagation()
     if (cardVideoRef.current) {
-      cardVideoRef.current.paused
-        ? cardVideoRef.current.play().catch(console.error)
-        : cardVideoRef.current.pause()
+      if (!isPlaying) {
+        setIsPlaying(true)
+        // src will be set by re-render, autoPlay will take over
+      } else {
+        cardVideoRef.current.pause()
+        setIsPlaying(false)
+      }
     }
   }
 
   const openModal = () => {
     if (dialogRef.current) {
+      setIsModalOpen(true)
       dialogRef.current.showModal()
       if (personsList.length === 0 && !loadingPersons) {
         fetchPersons()
@@ -299,6 +305,7 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
     setTimeout(() => {
       dialog.classList.remove('closing')
       dialog.close()
+      setIsModalOpen(false)
       if (needsRefresh) {
         onRefresh?.()
         setNeedsRefresh(false)
@@ -322,14 +329,15 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
         <div className={`video-container ${isPlaying ? 'playing' : ''}`} onClick={handleCardVideoClick}>
           <video
             ref={cardVideoRef}
-            src={getImageUrl()}
+            src={isPlaying ? getImageUrl() : null}
             poster={getThumbnailUrl()}
             className="photo-image"
             muted
             playsInline
-            preload="none"
+            loop
+            autoPlay={isPlaying}
+            preload="auto"
             onError={() => setVideoError(true)}
-            onEnded={() => { setIsPlaying(false); setShowPlayOverlay(true); if (cardVideoRef.current) cardVideoRef.current.currentTime = 0 }}
             onPlay={() => { setIsPlaying(true); setShowPlayOverlay(false) }}
             onPause={() => { setIsPlaying(false); setShowPlayOverlay(true) }}
           />
@@ -487,266 +495,266 @@ function PhotoCard({ photo, onPhotoUpdated, cardRef, onRefresh }) {
           <p className="photo-date">{formatDate(photo.created_at)}</p>
         </div>
       </div>
+      <dialog ref={dialogRef} className="photo-modal">
+        {isModalOpen && (
+          <div className="modal-inner" onClick={(e) => e.stopPropagation()}>
 
-      {/* ── Modal ── */}
-      <dialog ref={dialogRef} className="photo-modal">
-        <div className="modal-inner" onClick={(e) => e.stopPropagation()}>
+            {/* Close button — floats above everything */}
+            <button className="modal-close" onClick={closeModal} aria-label="Close">✕</button>
 
-          {/* Close button — floats above everything */}
-          <button className="modal-close" onClick={closeModal} aria-label="Close">✕</button>
+            {/* LEFT — Media */}
+            <div className="modal-image-container">
+              {renderModalMedia()}
+            </div>
 
-          {/* LEFT — Media */}
-          <div className="modal-image-container">
-            {renderModalMedia()}
-          </div>
+            {/* RIGHT — Info panel */}
+            <div className="modal-info">
+              <div className="modal-info-scroll">
 
-          {/* RIGHT — Info panel */}
-          <div className="modal-info">
-            <div className="modal-info-scroll">
+                {/* Header */}
+                <div className="modal-header">
+                  <h2 className="modal-title">{getFileName()}</h2>
+                  <p className="modal-subtitle">{photo.path}</p>
+                </div>
 
-              {/* Header */}
-              <div className="modal-header">
-                <h2 className="modal-title">{getFileName()}</h2>
-                <p className="modal-subtitle">{photo.path}</p>
-              </div>
+                <div className="modal-divider" />
 
-              <div className="modal-divider" />
-
-              {/* Category */}
-              <div className="detail-item">
-                <span className="label">Category</span>
-                <select
-                  className="value"
-                  value={photo.category || ''}
-                  onChange={(e) => handleCategoryChange(e.target.value)}
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.05)',
-                    color: 'var(--text-main)',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    borderRadius: '4px',
-                    padding: '0.2rem 0.5rem',
-                    fontSize: '0.85rem',
-                    outline: 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  <option value="">—</option>
-                  {[
-                    "selfie", "group photo", "family photo", "birthday", "wedding", "party", "graduation", "holiday", "travel", "nature", "cityscape", "beach", "indoor", "food", "pet", "car", "screenshot", "document", "anime", "artwork", "meme", "video"
-                  ].sort().map(cat => (
-                    <option key={cat} value={cat}>{cat}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Description */}
-              {photo.scenario && (
+                {/* Category */}
                 <div className="detail-item">
-                  <span className="label">Description</span>
-                  <span className="value">{photo.scenario}</span>
+                  <span className="label">Category</span>
+                  <select
+                    className="value"
+                    value={photo.category || ''}
+                    onChange={(e) => handleCategoryChange(e.target.value)}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      color: 'var(--text-main)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '4px',
+                      padding: '0.2rem 0.5rem',
+                      fontSize: '0.85rem',
+                      outline: 'none',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    <option value="">—</option>
+                    {[
+                      "selfie", "group photo", "family photo", "birthday", "wedding", "party", "graduation", "holiday", "travel", "nature", "cityscape", "beach", "indoor", "food", "pet", "car", "screenshot", "document", "anime", "artwork", "meme", "video"
+                    ].sort().map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
                 </div>
-              )}
 
-              {/* People */}
-              <div className="detail-item">
-                <span className="label">People</span>
-                {photo.person_ids && photo.person_ids.length > 0 ? (
-                  <div className="modal-person-tags">
-                    {photo.person_ids.map((personId, idx) => {
-                      const name = photo.person_names?.[idx] || `Person ${personId}`
-                      const color = photo.person_colors?.[idx] || '#e8f5e9'
-                      return (
-                        <span
-                          key={`modal-${photo.id}-${personId}-${idx}`}
-                          className="modal-person-badge"
-                          style={{ backgroundColor: color, color: getContrastColor(color), borderColor: color }}
+                {/* Description */}
+                {photo.scenario && (
+                  <div className="detail-item">
+                    <span className="label">Description</span>
+                    <span className="value">{photo.scenario}</span>
+                  </div>
+                )}
+
+                {/* People */}
+                <div className="detail-item">
+                  <span className="label">People</span>
+                  {photo.person_ids && photo.person_ids.length > 0 ? (
+                    <div className="modal-person-tags">
+                      {photo.person_ids.map((personId, idx) => {
+                        const name = photo.person_names?.[idx] || `Person ${personId}`
+                        const color = photo.person_colors?.[idx] || '#e8f5e9'
+                        return (
+                          <span
+                            key={`modal-${photo.id}-${personId}-${idx}`}
+                            className="modal-person-badge"
+                            style={{ backgroundColor: color, color: getContrastColor(color), borderColor: color }}
+                          >
+                            {name}
+                            <button
+                              type="button"
+                              className="modal-person-badge-remove"
+                              onClick={(e) => handleClearPersonTag(personId, e)}
+                              title={`Remove ${name}`}
+                            >✕</button>
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : (
+                    <span className="value" style={{ opacity: 0.5 }}>No people tagged</span>
+                  )}
+                </div>
+
+                <div className="modal-divider" />
+
+                {/* Add label */}
+                <div className="detail-item">
+                  <span className="label">
+                    {selectedFace ? `Relabel Target Face` : 'Tag a person'}
+                  </span>
+                  {selectedFace && selectedFace.person_id && (
+                    <div style={{ 
+                      fontSize: '0.8rem', 
+                      color: 'var(--accent)', 
+                      marginBottom: '0.8rem', 
+                      background: 'var(--bg-surface-2)', 
+                      padding: '0.8rem 1rem', 
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--glass-border)'
+                    }}>
+                      <div style={{ marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Rename or Merge Target
+                      </div>
+                      
+                      {/* Rename Option */}
+                      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.8rem' }}>
+                        <input 
+                          type="text" 
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          placeholder="New name..."
+                          style={{ 
+                            flex: 1, 
+                            padding: '0.5rem 0.75rem', 
+                            fontSize: '0.85rem', 
+                            borderRadius: 'var(--radius-sm)', 
+                            border: '1px solid var(--glass-border)', 
+                            backgroundColor: 'var(--bg-deep)', 
+                            color: 'var(--text-primary)',
+                            outline: 'none',
+                            boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
+                          }}
+                        />
+                        <button 
+                          type="button"
+                          className="rename-btn"
+                          onClick={() => handleRenamePerson(selectedFace.person_id)}
+                          style={{ 
+                            background: 'var(--accent)', 
+                            color: '#111', 
+                            border: 'none', 
+                            borderRadius: 'var(--radius-sm)', 
+                            padding: '0.5rem 0.9rem', 
+                            fontSize: '0.75rem', 
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            boxShadow: '0 4px 12px var(--accent-glow)'
+                          }}
                         >
-                          {name}
-                          <button
-                            type="button"
-                            className="modal-person-badge-remove"
-                            onClick={(e) => handleClearPersonTag(personId, e)}
-                            title={`Remove ${name}`}
-                          >✕</button>
-                        </span>
-                      )
-                    })}
-                  </div>
-                ) : (
-                  <span className="value" style={{ opacity: 0.5 }}>No people tagged</span>
-                )}
-              </div>
+                          Save
+                        </button>
+                      </div>
 
-              <div className="modal-divider" />
+                      <div style={{ height: '1px', background: 'var(--glass-border)', margin: '0.8rem 0' }} />
 
-              {/* Add label */}
-              <div className="detail-item">
-                <span className="label">
-                  {selectedFace ? `Relabel Target Face` : 'Tag a person'}
-                </span>
-                {selectedFace && selectedFace.person_id && (
-                  <div style={{ 
-                    fontSize: '0.8rem', 
-                    color: 'var(--accent)', 
-                    marginBottom: '0.8rem', 
-                    background: 'var(--bg-surface-2)', 
-                    padding: '0.8rem 1rem', 
-                    borderRadius: 'var(--radius-md)',
-                    border: '1px solid var(--glass-border)'
-                  }}>
-                    <div style={{ marginBottom: '0.5rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Rename or Merge Target
+                      {/* Merge Dropdown Option */}
+                      <div style={{ marginBottom: '0.4rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        Merge with Existing
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <select
+                          value={selectedMergeTarget}
+                          onChange={e => setSelectedMergeTarget(e.target.value)}
+                          style={{
+                            flex: 1,
+                            padding: '0.5rem 0.75rem',
+                            fontSize: '0.85rem',
+                            borderRadius: 'var(--radius-sm)',
+                            border: '1px solid var(--glass-border)',
+                            backgroundColor: 'var(--bg-deep)',
+                            color: 'var(--text-primary)',
+                            outline: 'none',
+                            cursor: 'pointer',
+                            appearance: 'auto'
+                          }}
+                        >
+                          <option value="">Select person...</option>
+                          {personsList
+                            .filter(p => p.id !== selectedFace.person_id)
+                            .map(p => (
+                              <option key={p.id} value={p.id}>{p.name}</option>
+                            ))
+                          }
+                        </select>
+                        <button 
+                          type="button" 
+                          onClick={() => handleMergePerson(selectedFace.person_id)}
+                          disabled={!selectedMergeTarget}
+                          style={{ 
+                            background: 'var(--bg-mid)', 
+                            color: 'var(--accent)', 
+                            border: '1px solid var(--accent)', 
+                            borderRadius: 'var(--radius-sm)', 
+                            padding: '0.5rem 0.9rem', 
+                            fontSize: '0.75rem', 
+                            fontWeight: 500,
+                            cursor: 'pointer',
+                            opacity: selectedMergeTarget ? 1 : 0.4
+                          }}
+                        >
+                          Merge
+                        </button>
+                      </div>
                     </div>
-                    
-                    {/* Rename Option */}
-                    <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.8rem' }}>
-                      <input 
-                        type="text" 
-                        value={renameValue}
-                        onChange={e => setRenameValue(e.target.value)}
-                        placeholder="New name..."
-                        style={{ 
-                          flex: 1, 
-                          padding: '0.5rem 0.75rem', 
-                          fontSize: '0.85rem', 
-                          borderRadius: 'var(--radius-sm)', 
-                          border: '1px solid var(--glass-border)', 
-                          backgroundColor: 'var(--bg-deep)', 
-                          color: 'var(--text-primary)',
-                          outline: 'none',
-                          boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
-                        }}
-                      />
-                      <button 
-                        type="button"
-                        className="rename-btn"
-                        onClick={() => handleRenamePerson(selectedFace.person_id)}
-                        style={{ 
-                          background: 'var(--accent)', 
-                          color: '#111', 
-                          border: 'none', 
-                          borderRadius: 'var(--radius-sm)', 
-                          padding: '0.5rem 0.9rem', 
-                          fontSize: '0.75rem', 
-                          fontWeight: 600,
-                          cursor: 'pointer',
-                          boxShadow: '0 4px 12px var(--accent-glow)'
-                        }}
-                      >
-                        Save
-                      </button>
-                    </div>
-
-                    <div style={{ height: '1px', background: 'var(--glass-border)', margin: '0.8rem 0' }} />
-
-                    {/* Merge Dropdown Option */}
-                    <div style={{ marginBottom: '0.4rem', fontWeight: 600, color: 'var(--text-secondary)', fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                      Merge with Existing
-                    </div>
-                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  )}
+                  <div className="add-label-section">
+                    <div className="add-label-row">
                       <select
-                        value={selectedMergeTarget}
-                        onChange={e => setSelectedMergeTarget(e.target.value)}
-                        style={{
-                          flex: 1,
-                          padding: '0.5rem 0.75rem',
-                          fontSize: '0.85rem',
-                          borderRadius: 'var(--radius-sm)',
-                          border: '1px solid var(--glass-border)',
-                          backgroundColor: 'var(--bg-deep)',
-                          color: 'var(--text-primary)',
-                          outline: 'none',
-                          cursor: 'pointer',
-                          appearance: 'auto'
-                        }}
+                        value={selectedPersonForAdd}
+                        onChange={e => setSelectedPersonForAdd(e.target.value)}
                       >
-                        <option value="">Select person...</option>
-                        {personsList
-                          .filter(p => p.id !== selectedFace.person_id)
-                          .map(p => (
-                            <option key={p.id} value={p.id}>{p.name}</option>
-                          ))
-                        }
+                        <option value="">{loadingPersons ? 'Loading…' : 'Select person'}</option>
+                        {personsList.map(p => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                        <option value="other">Other…</option>
                       </select>
-                      <button 
+
+                      {selectedPersonForAdd === 'other' && (
+                        <input
+                          type="text"
+                          value={customPersonLabel}
+                          onChange={e => setCustomPersonLabel(e.target.value)}
+                          placeholder="Enter name…"
+                        />
+                      )}
+
+                      <button
                         type="button"
-                        onClick={() => handleMergePerson(selectedFace.person_id)}
-                        disabled={!selectedMergeTarget}
-                        style={{ 
-                          background: 'var(--bg-mid)', 
-                          color: 'var(--accent)', 
-                          border: '1px solid var(--accent)', 
-                          borderRadius: 'var(--radius-sm)', 
-                          padding: '0.5rem 0.9rem', 
-                          fontSize: '0.75rem', 
-                          fontWeight: 500,
-                          cursor: 'pointer',
-                          opacity: selectedMergeTarget ? 1 : 0.4
-                        }}
+                        onClick={addLabelFromDropdown}
+                        className="add-label-btn"
+                        disabled={
+                          !selectedPersonForAdd ||
+                          (selectedPersonForAdd === 'other' && !customPersonLabel.trim())
+                        }
                       >
-                        Merge
+                        {selectedFace ? 'Update Face Tag' : 'Add Tag'}
                       </button>
+                      {selectedFace && (
+                        <button type="button" onClick={() => setSelectedFace(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textAlign: 'center' }}>Cancel face selection</button>
+                      )}
                     </div>
-                  </div>
-                )}
-                <div className="add-label-section">
-                  <div className="add-label-row">
-                    <select
-                      value={selectedPersonForAdd}
-                      onChange={e => setSelectedPersonForAdd(e.target.value)}
-                    >
-                      <option value="">{loadingPersons ? 'Loading…' : 'Select person'}</option>
-                      {personsList.map(p => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                      <option value="other">Other…</option>
-                    </select>
-
-                    {selectedPersonForAdd === 'other' && (
-                      <input
-                        type="text"
-                        value={customPersonLabel}
-                        onChange={e => setCustomPersonLabel(e.target.value)}
-                        placeholder="Enter name…"
-                      />
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={addLabelFromDropdown}
-                      className="add-label-btn"
-                      disabled={
-                        !selectedPersonForAdd ||
-                        (selectedPersonForAdd === 'other' && !customPersonLabel.trim())
-                      }
-                    >
-                      {selectedFace ? 'Update Face Tag' : 'Add Tag'}
-                    </button>
-                    {selectedFace && (
-                      <button type="button" onClick={() => setSelectedFace(null)} style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontSize: '0.75rem', cursor: 'pointer', textAlign: 'center' }}>Cancel face selection</button>
-                    )}
                   </div>
                 </div>
+
               </div>
 
+              {/* Footer */}
+              <div className="modal-footer">
+                <span className="modal-date">Added {formatDateTime(photo.created_at)}</span>
+                <button 
+                  type="button" 
+                  onClick={handleRescan}
+                  className="add-label-btn" 
+                  style={{ width: 'auto', padding: '0.4rem 0.8rem', fontSize: '0.75rem', marginLeft: 'auto' }}
+                  disabled={isRescanning}
+                >
+                  {isRescanning ? 'Scanning...' : 'Rescan Picture'}
+                </button>
+              </div>
             </div>
 
-            {/* Footer */}
-            <div className="modal-footer">
-              <span className="modal-date">Added {formatDateTime(photo.created_at)}</span>
-              <button 
-                type="button" 
-                onClick={handleRescan}
-                className="add-label-btn" 
-                style={{ width: 'auto', padding: '0.4rem 0.8rem', fontSize: '0.75rem', marginLeft: 'auto' }}
-                disabled={isRescanning}
-              >
-                {isRescanning ? 'Scanning...' : 'Rescan Picture'}
-              </button>
-            </div>
           </div>
-
-        </div>
+        )}
       </dialog>
     </>
   )

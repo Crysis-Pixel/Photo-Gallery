@@ -50,10 +50,10 @@ export default function PersonManager({ onPersonsChange, onPhotoClick, refreshKe
     }
     setLoadingPhotos(p => ({ ...p, [personId]: true }))
     try {
-      const res = await fetch(`${API}/persons/${personId}/photos`)
+      const res = await fetch(`${API}/persons/${personId}/photos?limit=8&randomize=true`)
       if (res.ok) {
         const data = await res.json()
-        setPhotos(p => ({ ...p, [personId]: data }))
+        setPhotos(p => ({ ...p, [personId]: data })) // data is { items, total }
         loadedThumbnailsRef.current.add(personId)
         if (expand) setExpandedId(personId)
       }
@@ -337,7 +337,7 @@ const cancelDeletePerson = () => {
               <div className="pm-avatar">
                 {person.cover_photo_id ? (
                   <img 
-                    src={`${API}/${person.cover_photo_id}/content`} 
+                    src={`${API}/${person.cover_photo_id}/thumbnail`} 
                     alt={person.name} 
                     className="pm-avatar-img" 
                   />
@@ -396,13 +396,13 @@ const cancelDeletePerson = () => {
 
               {isExpanded && (
                 <div className="pm-strip">
-                  {personPhotos.length === 0 ? (
+                  {!personPhotos || !personPhotos.items || personPhotos.items.length === 0 ? (
                     <span className="pm-strip-empty">No photos found</span>
                   ) : (
-                    personPhotos.slice(0, 8).map(photo => (
+                    personPhotos.items.map(photo => (
                       <img
                         key={photo.id}
-                        src={`${API}/${photo.id}/content`}
+                        src={`${API}/${photo.id}/thumbnail`}
                         alt=""
                         className="pm-strip-thumb pm-strip-thumb--clickable"
                         title={photo.path.split(/[\\/]/).pop()}
@@ -418,8 +418,8 @@ const cancelDeletePerson = () => {
                       />
                     ))
                   )}
-                  {personPhotos.length > 8 && (
-                    <span className="pm-strip-more">+{personPhotos.length - 8} more</span>
+                  {personPhotos && personPhotos.total > 8 && (
+                    <span className="pm-strip-more">+{personPhotos.total - 8} more</span>
                   )}
                 </div>
               )}
