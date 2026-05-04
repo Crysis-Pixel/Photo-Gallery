@@ -5,9 +5,10 @@ from typing import Optional
 
 # Thumbnail settings
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+WORKSPACE_ROOT = PROJECT_ROOT
 THUMB_DIR = os.path.join(PROJECT_ROOT, 'data', 'thumbnails')
-THUMB_W = 400
-THUMB_H = 340
+THUMB_W = 480
+THUMB_H = 408
 
 os.makedirs(THUMB_DIR, exist_ok=True)
 

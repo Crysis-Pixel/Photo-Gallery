@@ -38,7 +38,7 @@
 }
 
 .photo-image-container {
-  height: 340px;
+  height: 408px;
   position: relative;
   overflow: hidden;
   background: #080810;
@@ -208,8 +208,7 @@
   align-items: center;
   justify-content: center;
   color: var(--accent);
-  font-size: 20px;
-  padding-left: 4px;
+  padding-left: 3px;
   transition: all 0.2s ease;
 }
 
@@ -542,7 +541,8 @@
 }
 
 .add-label-row select,
-.add-label-row input[type="text"] {
+.add-label-row input[type="text"],
+.detail-item select.value {
   width: 100%;
   background: rgba(255,255,255,0.05);
   border: 1px solid rgba(255,255,255,0.1);
@@ -704,6 +704,29 @@
   .modal-close {
     top: 0.75rem;
     right: 0.75rem;
+  }
+}
+
+@media (max-width: 600px) {
+  .modal-info-scroll {
+    padding: 1.5rem 1.25rem;
+  }
+  
+  .modal-title {
+    font-size: 1.15rem;
+  }
+  
+  .detail-item > .value {
+    font-size: 0.82rem;
+  }
+
+  .add-label-section {
+    padding: 0.85rem;
+  }
+  
+  .add-label-btn {
+    padding: 0.55rem;
+    font-size: 0.78rem;
   }
 }
 

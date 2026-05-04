@@ -52,6 +52,9 @@ async def lifespan(app: FastAPI):
         if "color" not in existing_columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE persons ADD COLUMN color STRING"))
+        if "cover_file_id" not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE persons ADD COLUMN cover_file_id INTEGER"))
 
     if "faces" in inspector.get_table_names():
         existing_columns = {col["name"] for col in inspector.get_columns("faces")}

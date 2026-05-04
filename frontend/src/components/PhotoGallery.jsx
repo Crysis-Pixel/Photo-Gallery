@@ -8,7 +8,8 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [filterCategory, setFilterCategory] = useState('')
-  const [filterScenario, setFilterScenario] = useState('')
+  const [searchTerm, setSearchTerm] = useState('')
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('')
   const [filterPerson, setFilterPerson] = useState('')
   const [filterAlbum, setFilterAlbum] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
@@ -43,7 +44,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   useImperativeHandle(ref, () => ({
     scrollToPhoto: (photoId) => {
       setFilterCategory('')
-      setFilterScenario('')
+      setSearchTerm('')
       setFilterPerson('')
       setFilterAlbum('')
       setCurrentPage(1)
@@ -74,8 +75,16 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   }, [refreshKey])
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm)
+      setCurrentPage(1)
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [searchTerm])
+
+  useEffect(() => {
     fetchPhotos(false) // Normal fetch for filter/page changes
-  }, [currentPage, filterCategory, filterScenario, filterPerson, filterAlbum])
+  }, [currentPage, filterCategory, debouncedSearchTerm, filterPerson, filterAlbum])
 
   const fetchMetadata = async () => {
     try {
@@ -98,7 +107,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
       params.append('skip', (currentPage - 1) * 52)
       params.append('limit', 52)
       if (filterCategory) params.append('category', filterCategory)
-      if (filterScenario) params.append('scenario', filterScenario)
+      if (debouncedSearchTerm) params.append('search', debouncedSearchTerm)
       if (filterPerson) params.append('person_id', filterPerson)
       if (filterAlbum) params.append('album', filterAlbum)
 
@@ -151,14 +160,14 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
           </select>
         </div>
         <div className="filter-group">
-          <label>Scenario:</label>
-          <select
-            value={filterScenario}
-            onChange={e => { setCurrentPage(1); setFilterScenario(e.target.value) }}
-          >
-            <option value="">All Scenarios</option>
-            {scenarios.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>
+          <label>Search:</label>
+          <input
+            type="text"
+            placeholder="Search albums or descriptions..."
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            className="search-input"
+          />
         </div>
         <div className="filter-group">
           <label>Album:</label>
@@ -230,6 +239,59 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
               <div className="no-photos">No photos found</div>
             )}
           </div>
+
+          {/* Bottom Pagination */}
+          {totalPages > 1 && (
+            <div className="pagination-footer">
+              <div className="pagination-controls">
+                <button
+                  className="pagination-btn"
+                  onClick={() => {
+                    setCurrentPage(prev => Math.max(1, prev - 1));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  disabled={currentPage === 1}
+                >
+                  Prev
+                </button>
+                <div className="pagination-select-wrapper">
+                  <span>Page</span>
+                  <select
+                    className="page-select"
+                    value={currentPage}
+                    onChange={e => {
+                      setCurrentPage(Number(e.target.value));
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                  >
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                      <option key={page} value={page}>{page}</option>
+                    ))}
+                  </select>
+                  <span>of {totalPages}</span>
+                </div>
+                <button
+                  className="pagination-btn"
+                  onClick={() => {
+                    setCurrentPage(prev => Math.min(totalPages, prev + 1));
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Scroll to Top Button */}
+          <button 
+            className="scroll-to-top" 
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            aria-label="Scroll to top"
+          >
+            ↑
+          </button>
         </>
       )}
     </div>

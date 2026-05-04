@@ -85,7 +85,6 @@ class PersonBase(BaseModel):
 class PersonCreate(PersonBase):
     pass
 
-
 class PersonUpdate(BaseModel):
     name: Optional[str] = None
     color: Optional[str] = None

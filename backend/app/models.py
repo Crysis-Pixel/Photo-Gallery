@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Float, Boolean, UniqueConstraint
+import sqlalchemy
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
@@ -68,7 +69,12 @@ class Person(Base):
     encoding = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     sample_encodings = Column(Text, nullable=True)  # JSON list of up to 5 embeddings
+    cover_file_id = Column(Integer, nullable=True)
     faces = relationship("Face", back_populates="person")
+
+    @property
+    def cover_photo_id(self):
+        return self.cover_file_id
 
     _parsed_encodings = None
     _last_encoding = None
@@ -98,6 +104,10 @@ class Person(Base):
 
 class Face(Base):
     __tablename__ = "faces"
+    __table_args__ = (
+        # Prevent multiple tagging of the same person to the same file
+        sqlalchemy.UniqueConstraint('file_id', 'person_id', name='unique_file_person'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     file_id = Column(Integer, ForeignKey("files.id"), index=True)

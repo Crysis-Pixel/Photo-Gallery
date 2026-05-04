@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
 from app import crud, schemas
 from app.database import SessionLocal
-from app.models import File
+from app.models import File, Face
 from app.utils import THUMB_DIR, THUMB_W, THUMB_H
 import os
 import mimetypes
@@ -222,6 +222,14 @@ def delete_folder(id: int, db: Session = Depends(get_db)):
 
 @router.post("/{file_id}/persons", response_model=schemas.FileResponse)
 def add_person_tag(file_id: int, body: schemas.FilePersonAdd, db: Session = Depends(get_db)):
+    from app.models import Face
+    
+    # Check if person is already tagged
+    if body.person_id:
+        existing = db.query(Face).filter(Face.file_id == file_id, Face.person_id == body.person_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="This person is already tagged in this photo")
+    
     result = crud.add_file_person_tag(
         db, file_id,
         person_id=body.person_id,
@@ -271,7 +279,9 @@ def list_all_files_debug(db: Session = Depends(get_db)):
 
 @router.get("/{file_id}", response_model=schemas.FileResponse)
 def get_file(file_id: int, db: Session = Depends(get_db)):
-    db_file = crud.get_file_by_id(db, file_id)
+    from sqlalchemy.orm import joinedload
+    # Eagerly load person relationships for faces to ensure person_name and person_color are populated
+    db_file = db.query(File).options(joinedload(File.faces).joinedload(Face.person)).filter(File.id == file_id).first()
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
     return db_file
@@ -289,12 +299,28 @@ def update_file(file_id: int, updates: schemas.FileUpdate, db: Session = Depends
 
 @router.post("/{file_id}/rescan", response_model=schemas.FileResponse)
 def rescan_file(file_id: int, db: Session = Depends(get_db)):
-    db_file = crud.get_file_by_id(db, file_id)
+    # Query file for processing
+    db_file = db.query(File).filter(File.id == file_id).first()
     if not db_file:
         raise HTTPException(status_code=404, detail="File not found")
     
-    updated_file = crud.auto_tag_file(db, db_file, tag_category=True, tag_scenario=True, tag_faces=True, force_faces=True)
-    return updated_file
+    # Perform the rescan (deletes old faces, creates new ones)
+    crud.auto_tag_file(db, db_file, tag_category=True, tag_scenario=True, tag_faces=True, force_faces=True)
+    
+    # Clear the session to ensure we get fresh data from the database
+    db.expunge_all()
+    
+    # Fresh query without any session state from before
+    fresh_file = db.query(File).filter(File.id == file_id).first()
+    if not fresh_file:
+        raise HTTPException(status_code=404, detail="File not found after rescan")
+    
+    # Access faces and persons to load them within the session context
+    _ = fresh_file.faces
+    for face in fresh_file.faces:
+        _ = face.person  # Trigger loading of person relationship
+    
+    return fresh_file
 
 
 
@@ -308,6 +334,7 @@ def list_files(
     scenario: str = None,
     person_id: int = None,
     album: str = None,
+    search: str = None,
     db: Session = Depends(get_db)
 ):
     folder_configs = crud.get_scan_folders(db)
@@ -328,7 +355,8 @@ def list_files(
         category=category,
         scenario=scenario,
         person_id=person_id,
-        album=album
+        album=album,
+        search=search
     )
     if not items and skip == 0 and total == 0:
         def run_bg_initial_scan():
