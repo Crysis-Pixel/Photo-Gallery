@@ -54,3 +54,8 @@ Photos
 Photos 2
 venv
 thumbnails
+/frontend/src-tauri/icons
+
+/target/
+/gen/schemas
+frontend/src-tauri/binaries/photo-gallery-backend-x86_64-pc-windows-msvc.exe

@@ -617,6 +617,41 @@
   letter-spacing: 0.04em;
 }
 
+.modal-rotate-btns {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.rotate-btn {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.75);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.rotate-btn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  border-color: rgba(255,255,255,0.25);
+}
+
+.rotate-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.rotate-btn:active:not(:disabled) {
+  transform: scale(0.92);
+}
+
 /* Close button */
 .modal-close {
   position: absolute;

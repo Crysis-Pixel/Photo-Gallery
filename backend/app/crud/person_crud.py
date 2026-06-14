@@ -10,41 +10,47 @@ from app.utils import generate_random_color
 def get_persons_with_covers(db: Session) -> List[Person]:
     persons = db.query(Person).all()
     
-    # Subquery to count total faces in each file
-    face_counts = (
-        db.query(Face.file_id, func.count(Face.id).label('cnt'))
-        .group_by(Face.file_id)
-        .subquery()
-    )
-
-    for p in persons:
-        # If we already have a persistent cover, skip calculation
-        if p.cover_file_id:
-            continue
-            
-        # Find the best face (from a photo with the fewest total faces)
-        # If multiple photos have the same minimum count, pick one randomly.
-        cover_face = (
-            db.query(Face)
-            .filter(Face.person_id == p.id)
-            .join(face_counts, Face.file_id == face_counts.c.file_id)
-            .order_by(face_counts.c.cnt.asc(), func.random())
-            .first()
+    persons_without_covers = [p.id for p in persons if not p.cover_file_id]
+    if persons_without_covers:
+        file_face_counts = (
+            db.query(Face.file_id, func.count(Face.id).label('cnt'))
+            .group_by(Face.file_id)
+            .subquery()
         )
-        if cover_face:
-            p.cover_file_id = cover_face.file_id
-            db.add(p)
-            
-    try:
-        db.commit()
-    except Exception as e:
-        print(f"Error persisting cover photos: {e}")
-        db.rollback()
+        ranked = (
+            db.query(
+                Face.person_id,
+                Face.file_id,
+                func.row_number().over(
+                    partition_by=Face.person_id,
+                    order_by=(file_face_counts.c.cnt.asc(), func.random())
+                ).label('rn')
+            )
+            .join(file_face_counts, Face.file_id == file_face_counts.c.file_id)
+            .filter(Face.person_id.in_(persons_without_covers))
+            .subquery()
+        )
+        best_covers = db.query(ranked.c.person_id, ranked.c.file_id).filter(ranked.c.rn == 1).all()
+        cover_map = {row.person_id: row.file_id for row in best_covers}
+        for p in persons:
+            if p.id in cover_map:
+                p.cover_file_id = cover_map[p.id]
+        try:
+            db.commit()
+        except Exception as e:
+            print(f"Error persisting cover photos: {e}")
+            db.rollback()
     return persons
 
 def rename_person_record(db: Session, person_id: int, new_name: str) -> Optional[Person]:
     person = db.query(Person).filter(Person.id == person_id).first()
     if not person: return None
+    
+    existing = db.query(Person).filter(Person.name == new_name, Person.id != person_id).first()
+    if existing:
+        result = merge_persons_records(db, source_id=person_id, target_id=existing.id)
+        return result
+    
     person.name = new_name
     db.query(File).filter(File.id.in_(db.query(Face.file_id).filter(Face.person_id == person_id))).update({File.person_name: new_name}, synchronize_session=False)
     db.commit()

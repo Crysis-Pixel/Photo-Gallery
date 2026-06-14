@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, forwardRef, useImperativeHandle, createRef } from 'react'
 import PhotoCard from './PhotoCard'
 import '../styles/PhotoGallery.css'
+import { BASE_URL } from '../api'
 
 const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, refreshKey, onRefresh }, ref) {
   const [photos, setPhotos] = useState([])
@@ -17,6 +18,11 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [categories, setCategories] = useState([])
   const [scenarios, setScenarios] = useState([])
   const [albums, setAlbums] = useState([])
+
+  // Track photo IDs that were updated locally (via modal) so that a concurrent
+  // silent refresh doesn't clobber the fresh data with a potentially stale
+  // server response (SQLAlchemy identity map may return cached faces after rescan).
+  const locallyUpdatedRef = useRef(new Set())
 
   const persons = personsProp || []
   const sortedPersons = [...persons].sort((a, b) => {
@@ -36,10 +42,6 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
       }
     })
   }, [photos])
-
-  // ✅ REMOVED the separate useEffect that reset currentPage on filter change.
-  // Page is now reset inline in each filter's onChange handler so the fetch
-  // useEffect always sees currentPage=1 when a filter changes.
 
   useImperativeHandle(ref, () => ({
     scrollToPhoto: (photoId) => {
@@ -69,9 +71,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   }, [])
 
   useEffect(() => {
-    // If only refreshKey changed, do a silent fetch to avoid unmounting modals
-    const isOnlyRefresh = refreshKey > 0
-    fetchPhotos(isOnlyRefresh)
+    fetchPhotos(refreshKey > 0)
   }, [refreshKey])
 
   useEffect(() => {
@@ -83,12 +83,12 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   }, [searchTerm])
 
   useEffect(() => {
-    fetchPhotos(false) // Normal fetch for filter/page changes
+    fetchPhotos(false)
   }, [currentPage, filterCategory, debouncedSearchTerm, filterPerson, filterAlbum])
 
   const fetchMetadata = async () => {
     try {
-      const response = await fetch(`http://${window.location.hostname}:8000/files/metadata`)
+      const response = await fetch(`${BASE_URL}/files/metadata`)
       if (response.ok) {
         const data = await response.json()
         setCategories(data.categories || [])
@@ -111,10 +111,34 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
       if (filterPerson) params.append('person_id', filterPerson)
       if (filterAlbum) params.append('album', filterAlbum)
 
-      const response = await fetch(`http://${window.location.hostname}:8000/files/?${params.toString()}`)
+      const response = await fetch(`${BASE_URL}/files/?${params.toString()}`)
       if (!response.ok) throw new Error('Failed to fetch photos')
+
       const data = await response.json()
-      setPhotos(data.items || [])
+      const incoming = data.items || []
+
+      setPhotos(prev => {
+        // For any photo that was locally updated since the last full fetch,
+        // keep our fresh copy instead of the server's potentially-stale one.
+        const localMap = new Map()
+        if (locallyUpdatedRef.current.size > 0) {
+          prev.forEach(p => {
+            if (locallyUpdatedRef.current.has(p.id)) localMap.set(p.id, p)
+          })
+        }
+
+        const merged = incoming.map(serverPhoto =>
+          localMap.has(serverPhoto.id) ? localMap.get(serverPhoto.id) : serverPhoto
+        )
+
+        // Clear protection only on a full (non-silent) fetch — those are
+        // triggered by real user actions like page change or filter, at which
+        // point the server data is authoritative again.
+        if (!silent) locallyUpdatedRef.current.clear()
+
+        return merged
+      })
+
       setTotalPhotos(data.total || 0)
     } catch (err) {
       setError(err.message)
@@ -123,8 +147,18 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     }
   }
 
+  // Called by PhotoModal when a photo is edited/rescanned.
+  // Patches the card immediately AND marks the ID as locally-updated so the
+  // next silent refresh doesn't overwrite it with a potentially stale response.
   const handlePhotoUpdated = (updatedPhoto) => {
+    locallyUpdatedRef.current.add(updatedPhoto.id)
     setPhotos(prev => prev.map(p => p.id === updatedPhoto.id ? updatedPhoto : p))
+  }
+
+  // Silent background re-fetch — keeps counts/filters accurate without
+  // flashing the loading state or closing any open modal.
+  const handleSilentRefresh = () => {
+    fetchPhotos(true)
   }
 
   const ITEMS_PER_PAGE = 52
@@ -137,7 +171,6 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
 
   return (
     <div className="gallery-container">
-      {/* Filters */}
       <div className="filters">
         <div className="filter-group">
           <label>Category:</label>
@@ -232,7 +265,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                   photo={photo}
                   cardRef={cardRefs.current[photo.id]}
                   onPhotoUpdated={handlePhotoUpdated}
-                  onRefresh={onRefresh}
+                  onRefresh={handleSilentRefresh}
                 />
               ))
             ) : (
@@ -240,7 +273,6 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
             )}
           </div>
 
-          {/* Bottom Pagination */}
           {totalPages > 1 && (
             <div className="pagination-footer">
               <div className="pagination-controls">
@@ -284,9 +316,8 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
             </div>
           )}
 
-          {/* Scroll to Top Button */}
-          <button 
-            className="scroll-to-top" 
+          <button
+            className="scroll-to-top"
             onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
             aria-label="Scroll to top"
           >

@@ -1,3 +1,8 @@
+# ── Must run FIRST — sets HF_HOME / TORCH_HOME / CLIP_CACHE / INSIGHTFACE_HOME
+# ── before any AI library is imported (HuggingFace reads env vars at import time)
+import app.core.runtime_env as _runtime_env
+_runtime_env.configure()
+
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,6 +45,10 @@ def scan_folder_task():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────────────
+    # One-time model download (runs in background thread, no-op after first run)
+    from app.core.model_downloader import ensure_models
+    ensure_models()
+
     Base.metadata.create_all(bind=engine)
 
     # Auto-migrate missing columns
@@ -71,15 +80,7 @@ async def lifespan(app: FastAPI):
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE files ADD COLUMN face_scanned BOOLEAN DEFAULT FALSE"))
 
-    import threading
-    try:
-        # Run the initial scan in a background thread so it doesn't block server startup
-        # and allows the frontend to fetch photos immediately
-        thread = threading.Thread(target=scan_folder_task, daemon=True)
-        thread.start()
-        print("Startup scan scheduled in the background (processing untagged files only).")
-    except Exception as e:
-        print(f"Startup scan failed to start: {e}")
+
 
     # Run periodic scan less frequently to avoid overloading the system
     scheduler.add_job(scan_folder_task, "interval", minutes=30)
@@ -107,3 +108,13 @@ app.include_router(files.router)
 @app.get("/")
 def root():
     return {"status": "running"}
+
+import uvicorn
+
+if __name__ == "__main__":
+    uvicorn.run(
+        app,
+        host="127.0.0.1",
+        port=8000,
+        reload=False
+    )

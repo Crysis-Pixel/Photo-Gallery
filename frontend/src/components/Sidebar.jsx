@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import '../styles/Sidebar.css'
+import { BASE_URL } from '../api'
 
 const Sidebar = ({ isOpen, onClose, onRefresh }) => {
   const [folderPath, setFolderPath] = useState('')
@@ -19,7 +20,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
 
   const fetchFolders = async () => {
     try {
-      const res = await fetch(`http://${window.location.hostname}:8000/files/folder`)
+      const res = await fetch(`${BASE_URL}/files/folder`)
       if (res.ok) {
         const data = await res.json()
         setFolders(Array.isArray(data) ? data : [])
@@ -37,7 +38,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     setFolderError(null)
     
     try {
-        const res = await fetch(`http://${window.location.hostname}:8000/files/folder`, {
+        const res = await fetch(`${BASE_URL}/files/folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
@@ -74,7 +75,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     if (folders.length === 0) return
     setScanLoading(true)
     try {
-      await fetch(`http://${window.location.hostname}:8000/files/rescan`, { method: 'POST' })
+      await fetch(`${BASE_URL}/files/rescan`, { method: 'POST' })
       fetchFolders()
       onRefresh?.()                    // ← Refresh main UI
     } catch (e) {
@@ -95,7 +96,7 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     setFolderError(null)
 
     try {
-      const response = await fetch(`http://${window.location.hostname}:8000/files/recheck`, { method: 'POST' })
+      const response = await fetch(`${BASE_URL}/files/recheck`, { method: 'POST' })
 
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
@@ -124,7 +125,7 @@ const mergePeopleYouKnow = async () => {
     setFolderError(null)
     try {
       const res = await fetch(
-        `http://${window.location.hostname}:8000/files/persons/auto-merge?threshold=0.62`,
+        `${BASE_URL}/files/persons/auto-merge?threshold=0.62`,
         { method: 'POST' }
       )
       if (!res.ok) {
@@ -143,7 +144,7 @@ const mergePeopleYouKnow = async () => {
 
 const removeFolder = async (id) => {
   try {
-    const res = await fetch(`http://${window.location.hostname}:8000/files/folder/${id}`, { method: 'DELETE' });
+    const res = await fetch(`${BASE_URL}/files/folder/${id}`, { method: 'DELETE' });
     
     if (res.ok) {
       await fetchFolders();     // refresh sidebar list

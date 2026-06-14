@@ -76,7 +76,7 @@ def get_files_paginated(
     # (Simplified for now, will refine if needed)
     
     total = query.count()
-    items = query.order_by(File.created_at.desc(), File.id.desc()).offset(skip).limit(limit).all()
+    items = query.options(joinedload(File.faces).joinedload(Face.person)).order_by(File.created_at.desc(), File.id.desc()).offset(skip).limit(limit).all()
     
     return items, total
 

@@ -7,12 +7,8 @@ from PIL import Image, ImageOps
 from concurrent.futures import ThreadPoolExecutor
 from sqlalchemy.orm import Session
 from app.models import File, Face, Person
-from app.core.ai import (
-    model, preprocess, device, 
-    get_image_description, BLIP_AVAILABLE, 
-    INSIGHTFACE_AVAILABLE, face_analyzer,
-    FACENET_AVAILABLE, mtcnn, resnet
-)
+import app.core.ai as _ai
+from app.core.ai import get_clip, get_insightface, get_facenet, get_image_description
 from app.core.embeddings import best_similarity, update_person_encoding
 from app.core.thumbnails import generate_thumbnail
 from app.crud.person_crud import create_new_person
@@ -56,36 +52,47 @@ def batch_auto_tag_files(db: Session, db_files: list[File], tag_category=True, t
         if tag_category:
             try:
                 labels = ["selfie", "group photo", "family photo", "birthday", "wedding", "party", "graduation", "holiday", "travel", "nature", "cityscape", "beach", "indoor", "food", "pet", "car", "screenshot", "document", "anime", "artwork", "meme"]
-                import clip
-                tokens = clip.tokenize(labels).to(device)
-                with torch.no_grad():
-                    pre = torch.stack([preprocess(img) for img in valid_images]).to(device)
-                    feat = model.encode_image(pre).float()
-                    feat /= feat.norm(dim=-1, keepdim=True)
-                    text_feat = model.encode_text(tokens).float()
-                    text_feat /= text_feat.norm(dim=-1, keepdim=True)
-                    logits = (feat @ text_feat.T).softmax(dim=-1)
-                    for idx, f in enumerate(valid_batch):
-                        if not f.category: f.category = labels[logits[idx].argmax().item()]
+                clip_model, preprocess, device = get_clip()
+                if clip_model is not None:
+                    import clip
+                    tokens = clip.tokenize(labels).to(device)
+                    with torch.no_grad():
+                        pre = torch.stack([preprocess(img) for img in valid_images]).to(device)
+                        feat = clip_model.encode_image(pre).float()
+                        feat /= feat.norm(dim=-1, keepdim=True)
+                        text_feat = clip_model.encode_text(tokens).float()
+                        text_feat /= text_feat.norm(dim=-1, keepdim=True)
+                        logits = (feat @ text_feat.T).softmax(dim=-1)
+                        for idx, f in enumerate(valid_batch):
+                            if not f.category: f.category = labels[logits[idx].argmax().item()]
             except Exception as e: print(f"CLIP Error: {e}")
 
-        if tag_scenario and BLIP_AVAILABLE:
+        if tag_scenario:
             for f, img in zip(valid_batch, valid_images):
-                if not f.scenario: f.scenario = sanitize_description(get_image_description(img))
+                if not f.scenario:
+                    desc = get_image_description(img)  # returns None if BLIP unavailable
+                    if desc: f.scenario = sanitize_description(desc)
 
         if tag_faces:
-            if device == "cuda": torch.cuda.empty_cache()
+            _cur_device = _ai._get_device()
+            if _cur_device == "cuda": torch.cuda.empty_cache()
             cached_persons = db.query(Person).all()
             for f, img in zip(valid_batch, valid_images):
                 try:
                     generate_thumbnail(f)
-                    if INSIGHTFACE_AVAILABLE: _tag_faces_insightface(db, f, img, np, 0.55, 0.01, 0.3, cached_persons=cached_persons)
-                    elif FACENET_AVAILABLE: _tag_faces_facenet(db, f, img, np, 0.65)
+                    if _ai.INSIGHTFACE_AVAILABLE or get_insightface() is not None:
+                        _tag_faces_insightface(db, f, img, np, 0.55, 0.01, 0.3, cached_persons=cached_persons)
+                    elif _ai.FACENET_AVAILABLE or get_facenet()[0] is not None:
+                        _tag_faces_facenet(db, f, img, np, 0.65)
                     f.face_scanned = True
                 except Exception as e: print(f"Face Error: {e}")
         db.commit()
 
 def _tag_faces_insightface(db, db_file, image, np, sim_th, min_ratio, det_th, cached_persons=None):
+    db.query(Face).filter(Face.file_id == db_file.id).delete()
+    db.commit()
+    face_analyzer = get_insightface()
+    if face_analyzer is None: return
     w, h = image.size
     min_area = (w * h) * (min_ratio ** 2)
     faces = face_analyzer.get(np.array(image))
@@ -116,6 +123,10 @@ def _tag_faces_insightface(db, db_file, image, np, sim_th, min_ratio, det_th, ca
         db_file.person_name = first.name if first else None
 
 def _tag_faces_facenet(db, db_file, image, np, sim_th):
+    db.query(Face).filter(Face.file_id == db_file.id).delete()
+    db.commit()
+    mtcnn, resnet, device = get_facenet()
+    if mtcnn is None or resnet is None: return
     boxes, _ = mtcnn.detect(image)
     if boxes is None: return
     face_tensors = mtcnn.extract(image, boxes, None)
@@ -209,23 +220,26 @@ def auto_tag_file_service(db: Session, db_file: File, tag_category=True, tag_sce
     img = ImageOps.exif_transpose(img).convert("RGB")
     if tag_category:
         labels = ["selfie", "group photo", "family photo", "birthday", "wedding", "party", "graduation", "holiday", "travel", "nature", "cityscape", "beach", "indoor", "food", "pet", "car", "screenshot", "document", "anime", "artwork", "meme"]
-        import clip
-        tokens = clip.tokenize(labels).to(device)
-        with torch.no_grad():
-            feat = model.encode_image(preprocess(img).unsqueeze(0).to(device)).float()
-            feat /= feat.norm(dim=-1, keepdim=True)
-            text_feat = model.encode_text(tokens).float()
-            text_feat /= text_feat.norm(dim=-1, keepdim=True)
-            db_file.category = labels[(feat @ text_feat.T).softmax(dim=-1)[0].argmax().item()]
-    if tag_scenario and BLIP_AVAILABLE:
-        db_file.scenario = sanitize_description(get_image_description(img))
+        clip_model, preprocess, device = get_clip()
+        if clip_model is not None:
+            import clip
+            tokens = clip.tokenize(labels).to(device)
+            with torch.no_grad():
+                feat = clip_model.encode_image(preprocess(img).unsqueeze(0).to(device)).float()
+                feat /= feat.norm(dim=-1, keepdim=True)
+                text_feat = clip_model.encode_text(tokens).float()
+                text_feat /= text_feat.norm(dim=-1, keepdim=True)
+                db_file.category = labels[(feat @ text_feat.T).softmax(dim=-1)[0].argmax().item()]
+    if tag_scenario:
+        desc = get_image_description(img)  # returns None if BLIP unavailable
+        if desc: db_file.scenario = sanitize_description(desc)
     if tag_faces:
         if not force_faces and db_file.category in ["anime", "meme"]: pass
         else:
-            db.query(Face).filter(Face.file_id == db_file.id).delete()
-            db.commit()
-            if INSIGHTFACE_AVAILABLE: _tag_faces_insightface(db, db_file, img, np, 0.55, 0.01, 0.1)
-            elif FACENET_AVAILABLE: _tag_faces_facenet(db, db_file, img, np, 0.55)
+            if _ai.INSIGHTFACE_AVAILABLE or get_insightface() is not None:
+                _tag_faces_insightface(db, db_file, img, np, 0.55, 0.01, 0.1)
+            elif _ai.FACENET_AVAILABLE or get_facenet()[0] is not None:
+                _tag_faces_facenet(db, db_file, img, np, 0.55)
             db_file.face_scanned = True
     db.commit()
     # Explicitly expire and refresh to ensure relationships (like faces) are reloaded

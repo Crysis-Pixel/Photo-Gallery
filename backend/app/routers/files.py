@@ -1,7 +1,7 @@
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app import crud, schemas
 from app.database import SessionLocal
 from app.models import File, Face
@@ -277,9 +277,44 @@ def list_all_files_debug(db: Session = Depends(get_db)):
     }
 
 
+@router.post("/{file_id}/rotate", response_model=schemas.FileResponse)
+def rotate_file(file_id: int, degrees: int = Query(default=90, ge=0, le=360), db: Session = Depends(get_db)):
+    from PIL import Image, ImageOps
+    db_file = db.query(File).filter(File.id == file_id).first()
+    if not db_file:
+        raise HTTPException(status_code=404, detail="File not found")
+    if not os.path.exists(db_file.path):
+        raise HTTPException(status_code=404, detail="File not found on disk")
+    ext = os.path.splitext(db_file.path)[1].lower()
+    if ext in {'.mp4', '.mov', '.avi', '.mkv', '.webm'}:
+        raise HTTPException(status_code=400, detail="Cannot rotate videos")
+    try:
+        img = Image.open(db_file.path)
+        img = ImageOps.exif_transpose(img)
+        img = img.rotate(degrees, expand=True)
+        # Preserve format; fall back to JPEG if format is unsupported for saving
+        save_fmt = img.format or 'JPEG'
+        try:
+            img.save(db_file.path, format=save_fmt, quality=95 if save_fmt == 'JPEG' else None)
+        except Exception:
+            if save_fmt != 'JPEG':
+                img.save(db_file.path, format='JPEG', quality=95)
+            else:
+                raise
+        # Invalidate cached thumbnail
+        thumb_path = os.path.join(THUMB_DIR, f"{file_id}.webp")
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+        db_file.face_scanned = False  # Force face rescan since geometry changed
+        db.commit()
+        db.refresh(db_file)
+        return db_file
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to rotate image: {e}")
+
+
 @router.get("/{file_id}", response_model=schemas.FileResponse)
 def get_file(file_id: int, db: Session = Depends(get_db)):
-    from sqlalchemy.orm import joinedload
     # Eagerly load person relationships for faces to ensure person_name and person_color are populated
     db_file = db.query(File).options(joinedload(File.faces).joinedload(Face.person)).filter(File.id == file_id).first()
     if not db_file:
@@ -310,8 +345,8 @@ def rescan_file(file_id: int, db: Session = Depends(get_db)):
     # Clear the session to ensure we get fresh data from the database
     db.expunge_all()
     
-    # Fresh query without any session state from before
-    fresh_file = db.query(File).filter(File.id == file_id).first()
+    # Fresh query with eager loading of faces and person relationships
+    fresh_file = db.query(File).options(joinedload(File.faces).joinedload(Face.person)).filter(File.id == file_id).first()
     if not fresh_file:
         raise HTTPException(status_code=404, detail="File not found after rescan")
     

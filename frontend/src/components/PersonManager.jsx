@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import '../styles/PersonManager.css'
 import PersonCard from './PersonManager/PersonCard'
-
-const API = `http://${window.location.hostname}:8000/files`
+import { FILES_API as API } from '../api'
 
 export default function PersonManager({ onPhotoClick, onPersonsChange, refreshKey }) {
   const [persons, setPersons] = useState([])

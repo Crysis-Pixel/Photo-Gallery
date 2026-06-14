@@ -7,7 +7,7 @@ export default function PersonCard({ person, isSource, mergeSource, isExpanded, 
       
       <div className="pm-avatar">
         {person.cover_photo_id ? (
-          <img src={`${API}/${person.cover_photo_id}/thumbnail`} alt={person.name} className="pm-avatar-img" />
+          <img src={`${API}/${person.cover_photo_id}/thumbnail`} alt={person.name} className="pm-avatar-img" loading="lazy" />
         ) : (
           <span className="pm-avatar-icon">👤</span>
         )}

@@ -5,12 +5,7 @@ from app.models import File, Person, Face
 from app.schemas import FileCreate, FileUpdate
 
 # Import from refactored core modules
-from app.core.ai import (
-    INSIGHTFACE_AVAILABLE, face_analyzer,
-    BLIP_AVAILABLE, blip_processor, blip_model,
-    FACENET_AVAILABLE, mtcnn, resnet,
-    device, get_image_description
-)
+# (No longer need to import lazy-loaded AI instances here)
 from app.core.thumbnails import generate_thumbnail
 
 # Import from refactored CRUD sub-modules
@@ -94,10 +89,12 @@ def clear_file_person_tag(db: Session, file_id: int, person_id: int):
 def update_face_person_tag(db: Session, face_id: int, person_id: Optional[int] = None, person_name: Optional[str] = None):
     face = db.query(Face).filter(Face.id == face_id).first()
     if not face: return None
+    file_id = face.file_id
     if person_id:
         face.person_id = person_id
     elif person_name:
         from .person_crud import rename_person_record
         p = rename_person_record(db, face.person_id, person_name)
     db.commit()
-    return get_file_by_id(db, face.file_id)
+    db.expunge_all()
+    return get_file_by_id(db, file_id)

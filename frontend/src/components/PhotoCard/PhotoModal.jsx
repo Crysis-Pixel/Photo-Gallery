@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-
-const API = `http://${window.location.hostname}:8000/files`
+import { FILES_API as API } from '../../api'
 
 export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPhotoUpdated, onRefresh, fetchPersons, getSortedPersons, getContrastColor, formatDateTime, isVideoFile, isImageFile, getImageUrl, getFileName, handleClearPersonTag }) {
   const [photo, setPhoto] = useState(initialPhoto)
@@ -10,6 +9,7 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
   const [selectedPersonForAdd, setSelectedPersonForAdd] = useState('')
   const [customPersonLabel, setCustomPersonLabel] = useState('')
   const [isRescanning, setIsRescanning] = useState(false)
+  const [isRotating, setIsRotating] = useState(false)
   const [imgAspectRatio, setImgAspectRatio] = useState('auto')
   const [needsRefresh, setNeedsRefresh] = useState(false)
   const [faceOverlayVersion, setFaceOverlayVersion] = useState(0)
@@ -36,6 +36,41 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
       setRenameValue(currentName)
     }
   }, [selectedFace, photo])
+
+  // Deduplicate person tags — after a rescan the server response is authoritative,
+  // but stale denormalized arrays can briefly contain duplicates. Always derive a
+  // clean unique list from the faces array when it's present; fall back to the
+  // top-level arrays only when faces are absent (e.g. non-face photos).
+  const personTags = useMemo(() => {
+    if (photo.faces && photo.faces.length > 0) {
+      const seen = new Set()
+      return photo.faces
+        .filter(f => f.person_id != null)
+        .filter(f => {
+          if (seen.has(f.person_id)) return false
+          seen.add(f.person_id)
+          return true
+        })
+        .map(f => ({
+          personId: f.person_id,
+          name: f.person_name || `Person ${f.person_id}`,
+          color: f.person_color || null,
+        }))
+    }
+    // Fallback: zip top-level arrays, deduplicate by personId
+    const seen = new Set()
+    return (photo.person_ids || [])
+      .map((id, i) => ({
+        personId: id,
+        name: photo.person_names?.[i] || `Person ${id}`,
+        color: photo.person_colors?.[i] || null,
+      }))
+      .filter(t => {
+        if (seen.has(t.personId)) return false
+        seen.add(t.personId)
+        return true
+      })
+  }, [photo])
 
   const handleClose = () => {
     if (modalVideoRef.current) {
@@ -140,13 +175,17 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
       const response = await fetch(`${API}/${photo.id}/rescan`, { method: 'POST' })
       if (response.ok) {
         const updated = await response.json()
-        // Add cache buster to force image reload in the UI
         updated._cacheBuster = Date.now()
         setPhoto(updated)
+        // Push to grid immediately so the card reflects new tags without a page refresh
         onPhotoUpdated?.(updated)
-        setSelectedFace(null) // Clear selected face after rescan
-        setFaceOverlayVersion(v => v + 1) // Force face overlay remount
+        setSelectedFace(null)
+        setFaceOverlayVersion(v => v + 1)
         fetchPersons?.()
+        // Also trigger a background gallery refresh so person filter counts etc. stay in sync.
+        // We set needsRefresh=false so the close handler won't double-fire it.
+        onRefresh?.()
+        setNeedsRefresh(false)
       }
     } catch (err) { console.error(err) }
     finally { setIsRescanning(false) }
@@ -171,8 +210,30 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
   const handleLocalRemoveTag = async (personId, e) => {
     try {
       const updated = await handleClearPersonTag(personId, e)
-      if (updated) setPhoto(updated)
+      if (updated) {
+        updated._cacheBuster = Date.now()
+        setPhoto(updated)
+        onPhotoUpdated?.(updated)
+      }
     } catch (err) { console.error(err) }
+  }
+
+  const handleRotate = async (degrees) => {
+    if (!isImageFile()) return
+    setIsRotating(true)
+    try {
+      const response = await fetch(`${API}/${photo.id}/rotate?degrees=${degrees}`, { method: 'POST' })
+      if (response.ok) {
+        const updated = await response.json()
+        updated._cacheBuster = Date.now()
+        setPhoto(updated)
+        onPhotoUpdated?.(updated)
+        setSelectedFace(null)
+        setFaceOverlayVersion(v => v + 1)
+        await refreshPhoto()
+      }
+    } catch (err) { console.error(err) }
+    finally { setIsRotating(false) }
   }
 
   const renderMedia = () => {
@@ -250,9 +311,9 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
             <div className="detail-item">
               <span className="label">People</span>
               <div className="modal-person-tags">
-                {photo.person_ids?.map((personId, idx) => (
-                  <span key={personId} className="modal-person-badge" style={{ backgroundColor: photo.person_colors?.[idx], color: getContrastColor(photo.person_colors?.[idx]) }}>
-                    {photo.person_names?.[idx] || `Person ${personId}`}
+                {personTags.map(({ personId, name, color }) => (
+                  <span key={personId} className="modal-person-badge" style={{ backgroundColor: color, color: getContrastColor(color) }}>
+                    {name}
                     <button className="modal-person-badge-remove" onClick={(e) => handleLocalRemoveTag(personId, e)}>✕</button>
                   </span>
                 ))}
@@ -287,7 +348,7 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
                     <option value="other">Other...</option>
                   </select>
                   {selectedPersonForAdd === 'other' && <input type="text" value={customPersonLabel} onChange={e => setCustomPersonLabel(e.target.value)} placeholder="Name..." />}
-                  <button onClick={addLabelFromDropdown} disabled={!selectedPersonForAdd} className="add-label-btn">Add</button>
+                  <button onClick={addLabelFromDropdown} disabled={!selectedPersonForAdd} className="add-label-btn">{selectedFace ? 'Update Tag' : 'Add'}</button>
                 </div>
               </div>
             </div>
@@ -295,6 +356,10 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
 
           <div className="modal-footer">
             <span className="modal-date">Added {formatDateTime(photo.created_at)}</span>
+            <div className="modal-rotate-btns">
+              <button onClick={() => handleRotate(90)} disabled={!isImageFile() || isRotating} className="rotate-btn" title="Rotate left 90°">↺</button>
+              <button onClick={() => handleRotate(270)} disabled={!isImageFile() || isRotating} className="rotate-btn" title="Rotate right 90°">↻</button>
+            </div>
             <button onClick={handleRescan} disabled={isRescanning} className="add-label-btn" style={{ width: 'auto' }}>{isRescanning ? 'Scanning...' : 'Rescan'}</button>
           </div>
         </div>
