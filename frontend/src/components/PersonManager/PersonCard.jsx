@@ -1,4 +1,4 @@
-const API = `http://${window.location.hostname}:8000/files`
+import { FILES_API as API } from '../../api'
 
 export default function PersonCard({ person, isSource, mergeSource, isExpanded, loadingPhotos, onRemove, onEdit, onMerge, onSeePhotos, children }) {
   return (
@@ -7,7 +7,7 @@ export default function PersonCard({ person, isSource, mergeSource, isExpanded, 
       
       <div className="pm-avatar">
         {person.cover_photo_id ? (
-          <img src={`${API}/${person.cover_photo_id}/thumbnail`} alt={person.name} className="pm-avatar-img" loading="lazy" />
+          <img src={`${API}/${person.cover_photo_id}/thumbnail${person.cover_photo_created_at ? `?t=${new Date(person.cover_photo_created_at).getTime()}` : ''}`} alt={person.name} className="pm-avatar-img" loading="lazy" />
         ) : (
           <span className="pm-avatar-icon">👤</span>
         )}

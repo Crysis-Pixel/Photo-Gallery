@@ -197,3 +197,35 @@ main {
   transform: translateY(-1px);
   box-shadow: 0 4px 16px var(--accent-glow, rgba(232,213,176,0.2));
 }
+
+/* ── Scanning Badge ── */
+.scanning-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(232, 213, 176, 0.1);
+  border: 1px solid rgba(232, 213, 176, 0.25);
+  color: var(--accent);
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  margin-left: auto;
+  box-shadow: 0 0 12px rgba(232, 213, 176, 0.05);
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 8px rgba(232, 213, 176, 0.5); }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+.scanning-dot {
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent);
+  border-radius: 50%;
+  animation: pulse 1.6s infinite ease-in-out;
+}

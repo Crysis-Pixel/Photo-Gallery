@@ -7,7 +7,6 @@ numpy<2
 protobuf<4
 onnxruntime
 pillow==10.1.0
-mediapipe==0.10.5
 APScheduler==3.11.2
 transformers==4.35.2
 openai-clip==1.0.1

@@ -1,54 +1,137 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Mutex;
+use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
-use tauri_plugin_shell::process::CommandEvent;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 
-fn start_backend(app: &tauri::App) {
-    // In Tauri v2, the shell plugin natively supports sidecars.
-    // It automatically resolves the correct sidecar executable based on the architecture,
-    // and correctly terminates it when the parent process exits.
-    
+struct SidecarState {
+    child: Mutex<Option<CommandChild>>,
+    pid:   Mutex<Option<u32>>,
+}
+
+/// Kill a process and its entire tree using `taskkill /F /T /PID`.
+/// Falls back to the Tauri `CommandChild::kill()` if taskkill fails.
+fn kill_tree(pid: u32, child: CommandChild) {
+    let killed = std::process::Command::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .output();
+
+    match killed {
+        Ok(out) if out.status.success() => {
+            eprintln!("Backend process tree (pid {pid}) killed via taskkill");
+        }
+        Ok(out) => {
+            eprintln!(
+                "taskkill exited non-zero: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let _ = child.kill();
+        }
+        Err(e) => {
+            eprintln!("taskkill failed ({e}), falling back to child.kill()");
+            let _ = child.kill();
+        }
+    }
+}
+
+fn start_backend(app: &tauri::App) -> Option<(CommandChild, u32)> {
     let sidecar_command = match app.handle().shell().sidecar("photo-gallery-backend") {
         Ok(cmd) => cmd,
         Err(e) => {
             eprintln!("Failed to configure sidecar: {}", e);
-            return;
+            return None;
         }
     };
-        
-    // Forward USERPROFILE so the backend finds the same model cache dirs
-    let userprofile = std::env::var("USERPROFILE").unwrap_or_default();
-    
-    match sidecar_command.env("USERPROFILE", userprofile).spawn() {
-        Ok((mut rx, mut child)) => {
-            eprintln!("Backend started with pid {}", child.pid());
-            
-            // Spawn a thread to silently read from the sidecar to prevent its stdout/stderr buffers from filling up
+
+    // Forward all user-profile env vars so the backend resolves model
+    // cache dirs correctly regardless of how the sidecar is launched.
+    let userprofile  = std::env::var("USERPROFILE").unwrap_or_default();
+    let appdata      = std::env::var("APPDATA").unwrap_or_default();
+    let localappdata = std::env::var("LOCALAPPDATA").unwrap_or_default();
+
+    // Derive the same paths that runtime_env.py would compute
+    let insightface_home = format!("{}\\.insightface", userprofile);
+    let hf_home          = format!("{}\\.cache\\huggingface", userprofile);
+    let torch_home       = format!("{}\\.cache\\torch", userprofile);
+    let clip_cache       = format!("{}\\.cache\\clip", userprofile);
+
+    match sidecar_command
+        .env("USERPROFILE",          &userprofile)
+        .env("APPDATA",              &appdata)
+        .env("LOCALAPPDATA",         &localappdata)
+        .env("INSIGHTFACE_HOME",     &insightface_home)
+        .env("HF_HOME",              &hf_home)
+        .env("HUGGINGFACE_HUB_CACHE", format!("{}\\hub", hf_home))
+        .env("TRANSFORMERS_CACHE",   format!("{}\\hub", hf_home))
+        .env("TORCH_HOME",           &torch_home)
+        .env("CLIP_CACHE",           &clip_cache)
+        .spawn() {
+        Ok((mut rx, child)) => {
+            let pid = child.pid();
+            eprintln!("Backend started with pid {pid}");
+
+            // Drain stdout/stderr so the sidecar buffers never fill up
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = rx.recv().await {
                     match event {
-                        CommandEvent::Stdout(data) => print!("{}", String::from_utf8_lossy(&data)),
-                        CommandEvent::Stderr(data) => eprint!("{}", String::from_utf8_lossy(&data)),
+                        CommandEvent::Stdout(data) => {
+                            print!("{}", String::from_utf8_lossy(&data))
+                        }
+                        CommandEvent::Stderr(data) => {
+                            eprint!("{}", String::from_utf8_lossy(&data))
+                        }
                         CommandEvent::Terminated(payload) => {
-                            eprintln!("Backend sidecar terminated with code {:?}", payload.code);
+                            eprintln!(
+                                "Backend sidecar terminated with code {:?}",
+                                payload.code
+                            );
                         }
                         _ => {}
                     }
                 }
             });
+
+            Some((child, pid))
         }
-        Err(e) => eprintln!("Failed to spawn backend sidecar: {e}"),
+        Err(e) => {
+            eprintln!("Failed to spawn backend sidecar: {e}");
+            None
+        }
     }
 }
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(SidecarState {
+            child: Mutex::new(None),
+            pid:   Mutex::new(None),
+        })
         .setup(|app| {
-            start_backend(app);
+            if let Some((child, pid)) = start_backend(app) {
+                let state = app.state::<SidecarState>();
+                *state.child.lock().unwrap() = Some(child);
+                *state.pid.lock().unwrap()   = Some(pid);
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. } = event {
+                let state = app_handle.state::<SidecarState>();
+                let child = state.child.lock().unwrap().take();
+                let pid   = state.pid.lock().unwrap().take();
+
+                if let Some(child) = child {
+                    if let Some(pid) = pid {
+                        kill_tree(pid, child);
+                    } else {
+                        let _ = child.kill();
+                    }
+                }
+            }
+        });
 }

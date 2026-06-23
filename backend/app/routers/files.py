@@ -162,7 +162,14 @@ def recheck_missing(background_tasks: BackgroundTasks, db: Session = Depends(get
     }
 
 
+@router.get("/scan-status")
+def get_scan_status():
+    from app.services.tagging_service import is_scan_active
+    return {"scan_active": is_scan_active()}
+
+
 # ── Folder config endpoints ────────────────────────────────────────────────────
+
 
 @router.get("/folder", response_model=List[schemas.FolderConfigResponse])
 def get_folder_configs(db: Session = Depends(get_db)):

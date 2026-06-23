@@ -94,6 +94,7 @@ class PersonResponse(PersonBase):
     id: int
     color: Optional[str] = None
     cover_photo_id: Optional[int] = None
+    cover_photo_created_at: Optional[datetime] = None
  
 _apply_orm_mode(PersonResponse)
 

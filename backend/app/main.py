@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from app.database import Base, engine, SessionLocal
-from app.routers import files
+from app.routers import files, models
 from app import crud
 from apscheduler.schedulers.background import BackgroundScheduler
 import os
@@ -102,7 +102,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from fastapi import Request
+
+@app.middleware("http")
+async def add_no_cache_header(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path.lower()
+    # Prevent caching of JSON API responses, but allow caching for thumbnails, full content, and video streams
+    if "thumbnail" not in path and "content" not in path and "stream" not in path:
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 app.include_router(files.router)
+app.include_router(models.router)
 
 
 @app.get("/")

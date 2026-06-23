@@ -13,7 +13,6 @@ Models managed:
   2. CLIP         – ViT-B/32   (image–text embeddings)
   3. BLIP         – Salesforce/blip-image-captioning-base  (captions)
   4. FaceNet      – vggface2   (face embeddings, via torch.hub)
-  MediaPipe is bundled inside the exe — no download needed.
 """
 
 import logging
@@ -21,6 +20,9 @@ import os
 import threading
 
 _log = logging.getLogger("model_downloader")
+
+# Flag set to True while downloads are in progress (for status endpoint)
+download_in_progress: bool = False
 
 # Sentinel file written after a successful download pass
 def _sentinel_path() -> str:
@@ -106,6 +108,9 @@ def _download_facenet() -> bool:
 
 def _run_downloads() -> None:
     """Run all downloads sequentially and write sentinel on success."""
+    global download_in_progress
+    download_in_progress = True
+
     _log.info("=" * 60)
     _log.info("First-run model setup — downloading AI models…")
     _log.info("This runs once.  Models are stored in your user profile cache.")
@@ -117,6 +122,8 @@ def _run_downloads() -> None:
         "BLIP (captioning-base)": _download_blip(),
         "FaceNet (vggface2)":     _download_facenet(),
     }
+
+    download_in_progress = False
 
     _log.info("-" * 60)
     for name, ok in results.items():
@@ -145,6 +152,6 @@ def ensure_models() -> None:
         _log.info("Model sentinel found — skipping download check.")
         return
 
-    _log.info("Model sentinel not found — scheduling one-time download…")
+    _log.info("Model sentinel not found — starting background download…")
     t = threading.Thread(target=_run_downloads, daemon=True, name="model-downloader")
     t.start()

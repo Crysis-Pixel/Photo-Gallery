@@ -71,10 +71,15 @@ class Person(Base):
     sample_encodings = Column(Text, nullable=True)  # JSON list of up to 5 embeddings
     cover_file_id = Column(Integer, nullable=True)
     faces = relationship("Face", back_populates="person")
+    cover_file = relationship("File", foreign_keys=[cover_file_id], primaryjoin="Person.cover_file_id == File.id")
 
     @property
     def cover_photo_id(self):
         return self.cover_file_id
+
+    @property
+    def cover_photo_created_at(self):
+        return self.cover_file.created_at if self.cover_file else None
 
     _parsed_encodings = None
     _last_encoding = None

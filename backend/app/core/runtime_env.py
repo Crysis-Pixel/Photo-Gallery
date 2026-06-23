@@ -27,22 +27,27 @@ def configure() -> None:
 
     # ── HuggingFace (BLIP, Transformers, tokenizers) ─────────────────────────
     hf_home = _userprofile_path(".cache", "huggingface")
-    os.environ.setdefault("HF_HOME", hf_home)
-    os.environ.setdefault("HUGGINGFACE_HUB_CACHE", os.path.join(hf_home, "hub"))
-    os.environ.setdefault("TRANSFORMERS_CACHE", os.path.join(hf_home, "hub"))
+    os.environ["HF_HOME"] = hf_home
+    os.environ["HUGGINGFACE_HUB_CACHE"] = os.path.join(hf_home, "hub")
+    os.environ["TRANSFORMERS_CACHE"] = os.path.join(hf_home, "hub")
 
     # ── PyTorch Hub / FaceNet-PyTorch ────────────────────────────────────────
     torch_home = _userprofile_path(".cache", "torch")
-    os.environ.setdefault("TORCH_HOME", torch_home)
+    os.environ["TORCH_HOME"] = torch_home
 
     # ── OpenAI CLIP ──────────────────────────────────────────────────────────
     clip_cache = _userprofile_path(".cache", "clip")
-    os.environ.setdefault("CLIP_CACHE", clip_cache)
+    os.environ["CLIP_CACHE"] = clip_cache
 
     # ── InsightFace ──────────────────────────────────────────────────────────
     insightface_home = _userprofile_path(".insightface")
-    os.environ.setdefault("INSIGHTFACE_HOME", insightface_home)
+    os.environ["INSIGHTFACE_HOME"] = insightface_home
 
     # Create dirs now so libraries don't fail on first access
     for path in (hf_home, torch_home, clip_cache, insightface_home):
         os.makedirs(path, exist_ok=True)
+
+    print(f"[runtime_env] USERPROFILE={os.environ.get('USERPROFILE')}")
+    print(f"[runtime_env] INSIGHTFACE_HOME={insightface_home}")
+    print(f"[runtime_env] HF_HOME={hf_home}")
+    print(f"[runtime_env] TORCH_HOME={torch_home}")

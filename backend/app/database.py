@@ -3,15 +3,27 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from dotenv import load_dotenv
 import os
 
+import sys
+
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# Determine if running in a frozen executable (production build)
+IS_FROZEN = getattr(sys, 'frozen', False)
 
-# If no DATABASE_URL provided, fall back to a local SQLite file for development.
-if not DATABASE_URL:
-    default_sqlite = "sqlite:///./gallery.db"
-    print("Warning: DATABASE_URL is not set — falling back to sqlite:", default_sqlite)
-    DATABASE_URL = default_sqlite
+if IS_FROZEN:
+    # Build mode: Use SQLite only, stored inside the installed location folder next to the executable
+    install_dir = os.path.dirname(sys.executable)
+    db_path = os.path.join(install_dir, "gallery.db").replace("\\", "/")
+    DATABASE_URL = f"sqlite:///{db_path}"
+    print("Production build: using local SQLite database at:", db_path)
+else:
+    # Dev mode: Use PostgreSQL
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    if not DATABASE_URL:
+        DATABASE_URL = "postgresql://postgres:3616@localhost:5432/photo_gallery"
+        print("Warning: DATABASE_URL is not set in env — defaulting to PostgreSQL:", DATABASE_URL)
+    else:
+        print("Dev mode: using database from env:", DATABASE_URL)
 
 # For SQLite, disable the same-thread check to allow access from different threads.
 engine_kwargs = {}

@@ -14,10 +14,26 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [filterPerson, setFilterPerson] = useState('')
   const [filterAlbum, setFilterAlbum] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [showScrollTop, setShowScrollTop] = useState(false)
 
   const [categories, setCategories] = useState([])
   const [scenarios, setScenarios] = useState([])
   const [albums, setAlbums] = useState([])
+
+  useEffect(() => {
+    // In Tauri WebView, scroll happens on document.documentElement, not window
+    const handleScroll = () => {
+      const scrollY = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+      setShowScrollTop(scrollY > 300)
+    }
+    window.addEventListener('scroll', handleScroll, { passive: true })
+    document.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      document.removeEventListener('scroll', handleScroll)
+    }
+  }, [])
+
 
   // Track photo IDs that were updated locally (via modal) so that a concurrent
   // silent refresh doesn't clobber the fresh data with a potentially stale
@@ -67,11 +83,8 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   }))
 
   useEffect(() => {
-    fetchMetadata()
-  }, [])
-
-  useEffect(() => {
     fetchPhotos(refreshKey > 0)
+    fetchMetadata()
   }, [refreshKey])
 
   useEffect(() => {
@@ -169,6 +182,12 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     return <div className="gallery-container"><div className="error-message">Error: {error}</div></div>
   }
 
+  const scrollToTop = () => {
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+    try { document.documentElement.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+    try { document.body.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+  }
+
   return (
     <div className="gallery-container">
       <div className="filters">
@@ -212,7 +231,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
             {albums.map(a => <option key={a} value={a}>{a}</option>)}
           </select>
         </div>
-        <button className="refresh-btn" onClick={fetchPhotos}>Refresh</button>
+        <button className="refresh-btn" onClick={() => { fetchPhotos(false); onRefresh?.() }}>Refresh</button>
       </div>
 
       {loading ? (
@@ -278,10 +297,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
               <div className="pagination-controls">
                 <button
                   className="pagination-btn"
-                  onClick={() => {
-                    setCurrentPage(prev => Math.max(1, prev - 1));
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
+                  onClick={() => { setCurrentPage(prev => Math.max(1, prev - 1)); scrollToTop() }}
                   disabled={currentPage === 1}
                 >
                   Prev
@@ -291,10 +307,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                   <select
                     className="page-select"
                     value={currentPage}
-                    onChange={e => {
-                      setCurrentPage(Number(e.target.value));
-                      window.scrollTo({ top: 0, behavior: 'smooth' });
-                    }}
+                    onChange={e => { setCurrentPage(Number(e.target.value)); scrollToTop() }}
                   >
                     {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
                       <option key={page} value={page}>{page}</option>
@@ -304,10 +317,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                 </div>
                 <button
                   className="pagination-btn"
-                  onClick={() => {
-                    setCurrentPage(prev => Math.min(totalPages, prev + 1));
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
+                  onClick={() => { setCurrentPage(prev => Math.min(totalPages, prev + 1)); scrollToTop() }}
                   disabled={currentPage === totalPages}
                 >
                   Next
@@ -315,16 +325,18 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
               </div>
             </div>
           )}
-
-          <button
-            className="scroll-to-top"
-            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            aria-label="Scroll to top"
-          >
-            ↑
-          </button>
         </>
       )}
+
+      {/* Scroll-to-top: always in DOM so CSS transition works; positioned fixed bottom-right */}
+      <button
+        className={`scroll-to-top${showScrollTop ? ' scroll-to-top--visible' : ''}`}
+        onClick={scrollToTop}
+        aria-label="Scroll to top"
+        tabIndex={showScrollTop ? 0 : -1}
+      >
+        ↑
+      </button>
     </div>
   )
 })

@@ -249,7 +249,7 @@ export default function PersonManager({ onPhotoClick, onPersonsChange, refreshKe
             {expandedPerson === person.id && (
               <div className="pm-strip">
                 {personPhotos[person.id]?.map(photo => (
-                  <img key={photo.id} src={`${API}/${photo.id}/thumbnail`} className="pm-strip-thumb pm-strip-thumb--clickable" onClick={() => onPhotoClick?.(photo.id)} />
+                  <img key={photo.id} src={`${API}/${photo.id}/thumbnail${photo._cacheBuster ? `?t=${photo._cacheBuster}` : (photo.created_at ? `?t=${new Date(photo.created_at).getTime()}` : '')}`} className="pm-strip-thumb pm-strip-thumb--clickable" onClick={() => onPhotoClick?.(photo.id)} />
                 ))}
               </div>
             )}

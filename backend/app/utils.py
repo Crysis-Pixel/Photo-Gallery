@@ -4,9 +4,23 @@ import os
 from typing import Optional
 
 # Thumbnail settings
+# Use install directory for build/frozen mode, and project relative path for dev mode.
+import sys
+
+# Keep PROJECT_ROOT for legacy references and dev mode pathing
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 WORKSPACE_ROOT = PROJECT_ROOT
-THUMB_DIR = os.path.join(PROJECT_ROOT, 'data', 'thumbnails')
+
+IS_FROZEN = getattr(sys, 'frozen', False)
+
+if IS_FROZEN:
+    # Build mode: Thumbnails inside the installed location folder next to the executable
+    install_dir = os.path.dirname(sys.executable)
+    THUMB_DIR = os.path.join(install_dir, "thumbnails")
+else:
+    # Dev mode: Thumbnails in the project's data directory
+    THUMB_DIR = os.path.join(PROJECT_ROOT, 'data', 'thumbnails')
+
 THUMB_W = 480
 THUMB_H = 408
 

@@ -14,7 +14,27 @@ from app.core.thumbnails import generate_thumbnail
 from app.crud.person_crud import create_new_person
 from app.crud.folder_crud import get_scan_folders
 
+import threading
+
+_scan_lock = threading.Lock()
+_active_scans = 0
+
+def increment_active_scans():
+    global _active_scans
+    with _scan_lock:
+        _active_scans += 1
+
+def decrement_active_scans():
+    global _active_scans
+    with _scan_lock:
+        _active_scans = max(0, _active_scans - 1)
+
+def is_scan_active():
+    global _active_scans
+    return _active_scans > 0
+
 def sanitize_description(text: str) -> str:
+
     if not text: return None
     import re
     text = re.sub(r"\b(\w+)(?:\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
@@ -82,10 +102,14 @@ def batch_auto_tag_files(db: Session, db_files: list[File], tag_category=True, t
                     generate_thumbnail(f)
                     if _ai.INSIGHTFACE_AVAILABLE or get_insightface() is not None:
                         _tag_faces_insightface(db, f, img, np, 0.55, 0.01, 0.3, cached_persons=cached_persons)
+                        f.face_scanned = True
                     elif _ai.FACENET_AVAILABLE or get_facenet()[0] is not None:
                         _tag_faces_facenet(db, f, img, np, 0.65)
-                    f.face_scanned = True
-                except Exception as e: print(f"Face Error: {e}")
+                        f.face_scanned = True
+                except Exception as e:
+                    import traceback
+                    print(f"Face Error for {f.path}: {e}")
+                    traceback.print_exc()
         db.commit()
 
 def _tag_faces_insightface(db, db_file, image, np, sim_th, min_ratio, det_th, cached_persons=None):
@@ -154,62 +178,83 @@ def _tag_faces_facenet(db, db_file, image, np, sim_th):
         used.append(matched.id)
 
 def scan_and_tag_folder_service(db: Session, folder_path: str, force: bool = False):
-    supported = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
-    file_paths = []
-    for root, _, files in os.walk(folder_path):
-        for f in files:
-            if os.path.splitext(f)[1].lower() in supported:
-                file_paths.append(os.path.join(root, f))
-    to_tag = []
-    for fp in file_paths:
-        ext = os.path.splitext(fp)[1].lower()
-        ftype = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
-        existing = db.query(File).filter(File.path == fp).first()
-        if existing:
-            if not force and existing.category and existing.face_scanned:
-                generate_thumbnail(existing)
-                continue
-            f = existing
-        else:
-            f = File(path=fp, file_type=ftype)
-            db.add(f); db.commit(); db.refresh(f)
-        if ftype == "photo":
-            to_tag.append(f)
-            if len(to_tag) >= 32:
-                batch_auto_tag_files(db, to_tag)
-                to_tag = []
-        else:
-            f.category = "video"; f.face_scanned = True
-            db.add(f); db.commit(); generate_thumbnail(f)
-    if to_tag: batch_auto_tag_files(db, to_tag)
+    increment_active_scans()
+    try:
+        supported = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+        file_paths = []
+        for root, _, files in os.walk(folder_path):
+            for f in files:
+                if os.path.splitext(f)[1].lower() in supported:
+                    file_paths.append(os.path.join(root, f))
+        to_tag = []
+        for fp in file_paths:
+            ext = os.path.splitext(fp)[1].lower()
+            ftype = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
+            existing = db.query(File).filter(File.path == fp).first()
+            if existing:
+                if not force and existing.category and existing.face_scanned:
+                    generate_thumbnail(existing)
+                    continue
+                f = existing
+            else:
+                f = File(path=fp, file_type=ftype)
+                db.add(f); db.commit(); db.refresh(f)
+            if ftype == "photo":
+                to_tag.append(f)
+                if len(to_tag) >= 32:
+                    batch_auto_tag_files(db, to_tag)
+                    to_tag = []
+            else:
+                f.category = "video"; f.face_scanned = True
+                db.add(f); db.commit(); generate_thumbnail(f)
+        if to_tag: batch_auto_tag_files(db, to_tag)
+    finally:
+        decrement_active_scans()
 
 def recheck_and_tag_missing_service(db: Session):
-    folders = [f.path for f in get_scan_folders(db) if f.path and os.path.isdir(f.path)]
-    to_tag = []
-    supported = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
-    for fp_dir in folders:
-        for root, _, files in os.walk(fp_dir):
-            for filename in files:
-                if os.path.splitext(filename)[1].lower() not in supported: continue
-                path = os.path.join(root, filename)
-                existing = db.query(File).filter(File.path == path).first()
-                if not existing:
-                    ext = os.path.splitext(path)[1].lower()
-                    ftype = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
-                    f = File(path=path, file_type=ftype)
-                    db.add(f); db.commit(); db.refresh(f)
-                    generate_thumbnail(f)
-                    if ftype == "photo": to_tag.append(f)
-                    else: f.category = "video"; f.face_scanned = True; db.add(f); db.commit()
-    all_f = db.query(File).all()
-    for f in all_f:
-        if not os.path.exists(f.path):
-            db.query(Face).filter(Face.file_id == f.id).delete(); db.delete(f)
-            continue
-        generate_thumbnail(f)
-        if f.file_type == "photo" and (not f.category or not f.face_scanned) and f not in to_tag: to_tag.append(f)
-    db.commit()
-    if to_tag: batch_auto_tag_files(db, to_tag)
+    increment_active_scans()
+    try:
+        folders = [f.path for f in get_scan_folders(db) if f.path and os.path.isdir(f.path)]
+        to_tag = []
+        supported = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+        for fp_dir in folders:
+            for root, _, files in os.walk(fp_dir):
+                for filename in files:
+                    if os.path.splitext(filename)[1].lower() not in supported: continue
+                    path = os.path.join(root, filename)
+                    existing = db.query(File).filter(File.path == path).first()
+                    if not existing:
+                        ext = os.path.splitext(path)[1].lower()
+                        ftype = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
+                        f = File(path=path, file_type=ftype)
+                        db.add(f); db.commit(); db.refresh(f)
+                        generate_thumbnail(f)
+                        if ftype == "photo": to_tag.append(f)
+                        else: f.category = "video"; f.face_scanned = True; db.add(f); db.commit()
+        all_f = db.query(File).all()
+        # Find files that have face_scanned but no Face records (legacy bug fix)
+        face_ids = db.query(Face.file_id).distinct().all()
+        files_with_faces = {row[0] for row in face_ids}
+        for f in all_f:
+            if not os.path.exists(f.path):
+                # Delete thumbnail from disk
+                from app.utils import THUMB_DIR
+                thumb_path = os.path.join(THUMB_DIR, f"{f.id}.webp")
+                if os.path.exists(thumb_path):
+                    try:
+                        os.remove(thumb_path)
+                    except Exception as e:
+                        print(f"Error removing thumbnail for file {f.id}: {e}")
+                db.query(Face).filter(Face.file_id == f.id).delete(); db.delete(f)
+                continue
+            generate_thumbnail(f)
+            missing_faces = f.face_scanned and f.id not in files_with_faces
+            if f.file_type == "photo" and (not f.category or not f.face_scanned or missing_faces) and f not in to_tag:
+                to_tag.append(f)
+        db.commit()
+        if to_tag: batch_auto_tag_files(db, to_tag)
+    finally:
+        decrement_active_scans()
 
 def auto_tag_file_service(db: Session, db_file: File, tag_category=True, tag_scenario=True, tag_faces=True, force_faces=False):
     if not os.path.exists(db_file.path): return db_file
@@ -238,9 +283,10 @@ def auto_tag_file_service(db: Session, db_file: File, tag_category=True, tag_sce
         else:
             if _ai.INSIGHTFACE_AVAILABLE or get_insightface() is not None:
                 _tag_faces_insightface(db, db_file, img, np, 0.55, 0.01, 0.1)
+                db_file.face_scanned = True
             elif _ai.FACENET_AVAILABLE or get_facenet()[0] is not None:
                 _tag_faces_facenet(db, db_file, img, np, 0.55)
-            db_file.face_scanned = True
+                db_file.face_scanned = True
     db.commit()
     # Explicitly expire and refresh to ensure relationships (like faces) are reloaded
     db.expire(db_file)

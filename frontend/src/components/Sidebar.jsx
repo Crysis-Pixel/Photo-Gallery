@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react'
 import '../styles/Sidebar.css'
 import { BASE_URL } from '../api'
 
+const MODEL_LABELS = {
+  insightface: 'Face Detection (InsightFace)',
+  clip: 'Image Labels (CLIP)',
+  blip: 'Description (BLIP)',
+  facenet: 'Face Detection (FaceNet)',
+}
+
 const Sidebar = ({ isOpen, onClose, onRefresh }) => {
   const [folderPath, setFolderPath] = useState('')
   const [folders, setFolders] = useState([])
@@ -11,12 +18,26 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
   const [checkLoading, setCheckLoading] = useState(false)
   const [mergeLoading, setMergeLoading] = useState(false)
   const [mergeResult, setMergeResult] = useState(null)
+  const [modelStatus, setModelStatus] = useState(null)
+  const [recheckModal, setRecheckModal] = useState({ isOpen: false, title: '', message: '', type: 'info' })
 
   useEffect(() => {
     if (isOpen) {
       fetchFolders()
+      fetchModelStatus()
     }
   }, [isOpen])
+
+  const fetchModelStatus = async () => {
+    try {
+      const res = await fetch(`${BASE_URL}/models/status`)
+      if (res.ok) {
+        setModelStatus(await res.json())
+      }
+    } catch (e) {
+      console.error('Failed to fetch model status:', e)
+    }
+  }
 
   const fetchFolders = async () => {
     try {
@@ -54,9 +75,6 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
         
         setFolderPath('')
         await fetchFolders()  // Wait for folders to refresh
-        
-        // Show success message
-        alert('Folder added successfully! Scanning will start in the background.')
         
         // Refresh the gallery after a short delay
         setTimeout(() => {
@@ -106,7 +124,12 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
       const result = await response.json()
       console.log('Recheck completed:', result)
 
-      alert(`Recheck finished!\nNew files: ${result.new_files || 0}\nRetagged: ${result.retagged_files || 0}`)
+      setRecheckModal({
+        isOpen: true,
+        title: 'Smart Recheck Started',
+        message: 'The smart recheck has started in the background. The application is scanning your folders for new files, cleaning up deleted folders, and updating missing AI categories/faces. The main photo grid will refresh automatically as updates arrive.',
+        type: 'success'
+      })
 
       onRefresh?.()                    // ← Refresh main UI
 
@@ -240,11 +263,51 @@ const removeFolder = async (id) => {
             )}
           </div>
 
+          <div className="model-status-section">
+            <h3>AI Models</h3>
+            <div className="model-list">
+              {modelStatus ? (
+                Object.entries(MODEL_LABELS).map(([key, label]) => (
+                  <div key={key} className="model-item">
+                    <span className={`model-dot ${modelStatus[key] ? 'active' : 'inactive'}`} />
+                    <span className="model-name">{label}</span>
+                    <span className={`model-badge ${modelStatus[key] ? 'active' : 'inactive'}`}>
+                      {modelStatus[key] ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="no-folders">Loading model status...</p>
+              )}
+            </div>
+          </div>
+
           {folderError && <div className="sidebar-error">{folderError}</div>}
         </div>
       </div>
 
       {isOpen && <div className="sidebar-overlay" onClick={onClose} />}
+
+      {recheckModal.isOpen && (
+        <div className="custom-modal-overlay" onClick={() => setRecheckModal({ ...recheckModal, isOpen: false })}>
+          <div className="custom-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="custom-modal-header">
+              <div className="custom-modal-icon">
+                {recheckModal.type === 'success' ? '✓' : recheckModal.type === 'error' ? '⚠️' : '🔄'}
+              </div>
+              <h3 className="custom-modal-title">{recheckModal.title}</h3>
+            </div>
+            <div className="custom-modal-body">
+              <p>{recheckModal.message}</p>
+            </div>
+            <div className="custom-modal-footer">
+              <button className="custom-modal-close-btn" onClick={() => setRecheckModal({ ...recheckModal, isOpen: false })}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

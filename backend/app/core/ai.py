@@ -26,7 +26,6 @@ INSIGHTFACE_AVAILABLE: bool = False
 CLIP_AVAILABLE: bool = False
 BLIP_AVAILABLE: bool = False
 FACENET_AVAILABLE: bool = False
-MEDIAPIPE_AVAILABLE: bool = False
 
 # ── Private caches (do NOT access directly – use the getters below) ──────────
 
@@ -38,7 +37,6 @@ _blip_processor = None         # BLIP BlipProcessor
 _blip_model = None             # BLIP BlipForConditionalGeneration
 _mtcnn = None                  # FaceNet MTCNN detector
 _resnet = None                 # FaceNet InceptionResnetV1
-_mediapipe_face_mesh = None    # MediaPipe FaceMesh solution
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -209,34 +207,6 @@ def get_facenet():
     return _mtcnn, _resnet, _get_device()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. MediaPipe
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_mediapipe_face_mesh():
-    """
-    Return a MediaPipe FaceMesh solution object, loading on first call.
-    Returns None if MediaPipe cannot be loaded.
-    """
-    global _mediapipe_face_mesh, MEDIAPIPE_AVAILABLE
-
-    if _mediapipe_face_mesh is not None:
-        return _mediapipe_face_mesh
-
-    try:
-        _log.info("Loading MediaPipe FaceMesh…")
-        import mediapipe as mp
-
-        _mediapipe_face_mesh = mp.solutions.face_mesh
-        MEDIAPIPE_AVAILABLE = True
-        _log.info("MediaPipe loaded successfully.")
-    except Exception as e:
-        _log.error("MediaPipe failed to load: %s", e)
-        _mediapipe_face_mesh = None
-        MEDIAPIPE_AVAILABLE = False
-
-    return _mediapipe_face_mesh
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # High-level convenience functions
@@ -346,12 +316,57 @@ def detect_faces_facenet(image):
         return None, None
 
 
+def is_model_downloaded(name: str) -> bool:
+    """Check if the model files are already downloaded/available on disk."""
+    import os
+    home = os.path.expanduser("~")
+    
+    if name == "insightface":
+        if INSIGHTFACE_AVAILABLE:
+            return True
+        path = os.path.join(home, ".insightface", "models", "buffalo_l")
+        if os.path.exists(path):
+            try:
+                return any(f.endswith(".onnx") for f in os.listdir(path))
+            except Exception:
+                return False
+        return False
+
+    elif name == "clip":
+        if CLIP_AVAILABLE:
+            return True
+        path = os.path.join(home, ".cache", "clip", "ViT-B-32.pt")
+        return os.path.isfile(path)
+
+    elif name == "blip":
+        if BLIP_AVAILABLE:
+            return True
+        path = os.path.join(home, ".cache", "huggingface", "hub", "models--Salesforce--blip-image-captioning-base")
+        if os.path.exists(path):
+            try:
+                sn_path = os.path.join(path, "snapshots")
+                if os.path.exists(sn_path):
+                    return len(os.listdir(sn_path)) > 0
+                return True
+            except Exception:
+                return False
+        return False
+
+    elif name == "facenet":
+        if FACENET_AVAILABLE:
+            return True
+        path = os.path.join(home, ".cache", "torch", "hub", "checkpoints", "20180402-114759-vggface2.pt")
+        return os.path.isfile(path)
+
+    return False
+
+
 def status_report() -> dict:
-    """Return a dict summarising which models are currently loaded."""
+    """Return a dict summarising which models are downloaded and loadable."""
     return {
-        "insightface": INSIGHTFACE_AVAILABLE,
-        "clip": CLIP_AVAILABLE,
-        "blip": BLIP_AVAILABLE,
-        "facenet": FACENET_AVAILABLE,
-        "mediapipe": MEDIAPIPE_AVAILABLE,
+        "insightface": is_model_downloaded("insightface"),
+        "clip": is_model_downloaded("clip"),
+        "blip": is_model_downloaded("blip"),
+        "facenet": is_model_downloaded("facenet"),
     }
+

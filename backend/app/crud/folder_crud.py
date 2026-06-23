@@ -28,9 +28,26 @@ def delete_scan_folder(db: Session, folder_id: int):
     file_ids = [f.id for f in files_to_delete]
     
     if file_ids:
+        # Delete thumbnails from disk
+        from app.utils import THUMB_DIR
+        for fid in file_ids:
+            thumb_path = os.path.join(THUMB_DIR, f"{fid}.webp")
+            if os.path.exists(thumb_path):
+                try:
+                    os.remove(thumb_path)
+                except Exception as e:
+                    print(f"Error removing thumbnail for file {fid}: {e}")
+
         db.query(Face).filter(Face.file_id.in_(file_ids)).delete(synchronize_session=False)
         db.query(File).filter(File.id.in_(file_ids)).delete(synchronize_session=False)
     
     db.delete(folder)
     db.commit()
+
+    # Clean up orphaned persons who no longer have any face records
+    if file_ids:
+        from app.crud.person_crud import cleanup_orphaned_persons
+        cleanup_orphaned_persons(db)
+
     return True
+

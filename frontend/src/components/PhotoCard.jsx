@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import '../styles/PhotoCard.css'
 import PhotoModal from './PhotoCard/PhotoModal'
 import { FILES_API as API } from '../api'
@@ -7,7 +7,14 @@ function PhotoCard({ photo: photoProp, onPhotoUpdated, cardRef, onRefresh }) {
   // Keep a local copy so the card reflects edits made inside the modal
   // immediately on close, without waiting for a server refetch.
   const [localPhoto, setLocalPhoto] = useState(photoProp)
+  
+  // Keep localPhoto in sync with parent updates (e.g. from background scans/refreshes)
+  useEffect(() => {
+    setLocalPhoto(photoProp)
+  }, [photoProp])
+
   const [isModalOpen, setIsModalOpen] = useState(false)
+
   const [isPlaying, setIsPlaying] = useState(false)
   const [showPlayOverlay, setShowPlayOverlay] = useState(true)
   const [imageError, setImageError] = useState(false)
@@ -22,8 +29,14 @@ function PhotoCard({ photo: photoProp, onPhotoUpdated, cardRef, onRefresh }) {
   const isImageFile = () => ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'webp'].includes(getFileExtension(photo.path))
   const isVideoFile = () => ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(getFileExtension(photo.path))
 
-  const getImageUrl = () => `${API}/${photo.id}/content${photo._cacheBuster ? `?t=${photo._cacheBuster}` : ''}`
-  const getThumbnailUrl = () => `${API}/${photo.id}/thumbnail${photo._cacheBuster ? `?t=${photo._cacheBuster}` : ''}`
+  const getImageUrl = () => {
+    const cb = photo._cacheBuster || (photo.created_at ? new Date(photo.created_at).getTime() : '');
+    return `${API}/${photo.id}/content${cb ? `?t=${cb}` : ''}`;
+  }
+  const getThumbnailUrl = () => {
+    const cb = photo._cacheBuster || (photo.created_at ? new Date(photo.created_at).getTime() : '');
+    return `${API}/${photo.id}/thumbnail${cb ? `?t=${cb}` : ''}`;
+  }
   const getFileName = () => photo.path.split(/[\\/]/).pop()
 
   const formatDate = (dateStr) => new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })

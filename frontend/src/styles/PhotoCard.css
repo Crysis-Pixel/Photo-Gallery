@@ -558,23 +558,27 @@
   box-sizing: border-box;
 }
 
-.add-label-row select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(240,236,228,0.4)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+.add-label-row select,
+.detail-item select.value {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='rgba(240,236,228,0.6)' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 0.85rem center;
   padding-right: 2.2rem;
   cursor: pointer;
 }
 
-.add-label-row select option {
-  background: #1a1a2a;
+.add-label-row select option,
+.detail-item select.value option {
+  background: #12121e;
   color: var(--text-primary);
+  padding: 0.5rem;
 }
 
 .add-label-row select:focus,
+.detail-item select.value:focus,
 .add-label-row input[type="text"]:focus {
-  border-color: rgba(232, 213, 176, 0.35);
-  background: rgba(255,255,255,0.07);
+  border-color: rgba(232, 213, 176, 0.45);
+  background: rgba(255,255,255,0.08);
 }
 
 .add-label-btn {
