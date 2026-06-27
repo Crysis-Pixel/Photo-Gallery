@@ -11,11 +11,17 @@ load_dotenv()
 IS_FROZEN = getattr(sys, 'frozen', False)
 
 if IS_FROZEN:
-    # Build mode: Use SQLite only, stored inside the installed location folder next to the executable
-    install_dir = os.path.dirname(sys.executable)
-    db_path = os.path.join(install_dir, "gallery.db").replace("\\", "/")
-    DATABASE_URL = f"sqlite:///{db_path}"
-    print("Production build: using local SQLite database at:", db_path)
+    # If DATABASE_URL is explicitly provided (e.g. dev:tauri mode), honour it.
+    explicit_url = os.getenv("DATABASE_URL")
+    if explicit_url:
+        DATABASE_URL = explicit_url
+        print("Frozen build with explicit DATABASE_URL:", DATABASE_URL)
+    else:
+        # Production installer: use SQLite next to the executable
+        install_dir = os.path.dirname(sys.executable)
+        db_path = os.path.join(install_dir, "gallery.db").replace("\\", "/")
+        DATABASE_URL = f"sqlite:///{db_path}"
+        print("Production build: using local SQLite database at:", db_path)
 else:
     # Dev mode: Use PostgreSQL
     DATABASE_URL = os.getenv("DATABASE_URL")

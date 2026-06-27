@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import '../styles/Sidebar.css'
 import { BASE_URL } from '../api'
+import { open } from '@tauri-apps/plugin-dialog'
 
 const MODEL_LABELS = {
   insightface: 'Face Detection (InsightFace)',
@@ -10,6 +11,24 @@ const MODEL_LABELS = {
 }
 
 const Sidebar = ({ isOpen, onClose, onRefresh }) => {
+  const isTauri = window.__TAURI_INTERNALS__ !== undefined;
+  
+  const handleOpenDialog = async () => {
+    if (isTauri) {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+        });
+        if (selected) {
+          setFolderPath(selected);
+        }
+      } catch (err) {
+        console.error('Failed to open dialog', err);
+      }
+    }
+  };
+
   const [folderPath, setFolderPath] = useState('')
   const [folders, setFolders] = useState([])
   const [folderError, setFolderError] = useState(null)
@@ -213,12 +232,38 @@ const removeFolder = async (id) => {
             </div>
 
             <div className="add-folder-row">
-              <input
-                type="text"
-                value={folderPath}
-                onChange={(e) => setFolderPath(e.target.value)}
-                placeholder="Enter folder path on your PC"
-              />
+              <div className="path-input-container" style={{ position: 'relative', flex: 1, display: 'flex' }}>
+                <input
+                  type="text"
+                  value={folderPath}
+                  onChange={(e) => setFolderPath(e.target.value)}
+                  placeholder="Enter folder path on your PC"
+                  style={{ width: '100%', paddingRight: isTauri ? '30px' : '10px' }}
+                />
+                {isTauri && (
+                  <button
+                    onClick={handleOpenDialog}
+                    title="Browse for folder"
+                    style={{
+                      position: 'absolute',
+                      right: '5px',
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      fontSize: '16px',
+                      color: '#a9a9a9',
+                      padding: '0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    📁
+                  </button>
+                )}
+              </div>
               <button 
                 className="add-folder-btn" 
                 onClick={saveFolderPath}

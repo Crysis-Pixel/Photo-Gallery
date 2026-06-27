@@ -33,6 +33,19 @@
   border-bottom-color: rgba(232, 213, 176, 0.1);
 }
 
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.app-logo {
+  height: 38px;
+  width: auto;
+  border-radius: var(--radius-sm, 6px);
+  object-fit: contain;
+}
+
 .app-header h1 {
   margin: 0;
   font-family: var(--font-display);
@@ -228,4 +241,23 @@ main {
   background-color: var(--accent);
   border-radius: 50%;
   animation: pulse 1.6s infinite ease-in-out;
+}
+
+/* ── Startup Logo ── */
+.startup-logo {
+  height: 64px;
+  width: auto;
+  margin-bottom: 0.5rem;
+  border-radius: 12px;
+  object-fit: contain;
+}
+
+@keyframes logoPulse {
+  0% { transform: scale(0.96); filter: drop-shadow(0 0 0 rgba(232, 213, 176, 0)); }
+  50% { transform: scale(1.04); filter: drop-shadow(0 0 15px rgba(232, 213, 176, 0.25)); }
+  100% { transform: scale(0.96); filter: drop-shadow(0 0 0 rgba(232, 213, 176, 0)); }
+}
+
+.startup-logo--pulse {
+  animation: logoPulse 2s infinite ease-in-out;
 }

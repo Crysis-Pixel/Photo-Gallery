@@ -3,7 +3,7 @@ import '../styles/PersonManager.css'
 import PersonCard from './PersonManager/PersonCard'
 import { FILES_API as API } from '../api'
 
-export default function PersonManager({ onPhotoClick, onPersonsChange, refreshKey }) {
+export default function PersonManager({ onPhotoClick, onPersonPhotoClick, onPersonsChange, refreshKey }) {
   const [persons, setPersons] = useState([])
   const [loading, setLoading] = useState(false)
   const [loadingPhotos, setLoadingPhotos] = useState({})
@@ -65,14 +65,17 @@ export default function PersonManager({ onPhotoClick, onPersonsChange, refreshKe
       return
     }
     setExpandedPerson(personId)
-    if (!personPhotos[personId]) {
-      setLoadingPhotos(prev => ({ ...prev, [personId]: true }))
-      try {
-        const res = await fetch(`${API}/?person_id=${personId}&limit=12`)
-        const data = await res.json()
-        setPersonPhotos(prev => ({ ...prev, [personId]: data.items }))
-      } catch (err) { console.error(err) }
-      finally { setLoadingPhotos(prev => ({ ...prev, [personId]: false })) }
+    
+    // Always fetch a fresh random selection of 12 photos
+    setLoadingPhotos(prev => ({ ...prev, [personId]: true }))
+    try {
+      const res = await fetch(`${API}/persons/${personId}/photos?limit=12&randomize=true`)
+      const data = await res.json()
+      setPersonPhotos(prev => ({ ...prev, [personId]: data.items || [] }))
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingPhotos(prev => ({ ...prev, [personId]: false }))
     }
   }
 
@@ -150,7 +153,7 @@ export default function PersonManager({ onPhotoClick, onPersonsChange, refreshKe
   }
 
   const handlePointerDown = (e) => {
-    if (e.button !== 0 || e.target.closest('button, input')) return
+    if (e.button !== 0 || e.target.closest('button, input, img')) return
     const grid = gridRef.current
     if (!grid) return
     stopMomentum()
@@ -249,7 +252,7 @@ export default function PersonManager({ onPhotoClick, onPersonsChange, refreshKe
             {expandedPerson === person.id && (
               <div className="pm-strip">
                 {personPhotos[person.id]?.map(photo => (
-                  <img key={photo.id} src={`${API}/${photo.id}/thumbnail${photo._cacheBuster ? `?t=${photo._cacheBuster}` : (photo.created_at ? `?t=${new Date(photo.created_at).getTime()}` : '')}`} className="pm-strip-thumb pm-strip-thumb--clickable" onClick={() => onPhotoClick?.(photo.id)} />
+                  <img key={photo.id} src={`${API}/${photo.id}/thumbnail${photo._cacheBuster ? `?t=${photo._cacheBuster}` : (photo.created_at ? `?t=${new Date(photo.created_at).getTime()}` : '')}`} className="pm-strip-thumb pm-strip-thumb--clickable" onClick={() => onPersonPhotoClick?.(person.id, photo.id)} />
                 ))}
               </div>
             )}

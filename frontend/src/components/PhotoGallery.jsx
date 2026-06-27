@@ -51,31 +51,156 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
 
   const cardRefs = useRef({})
 
-  useEffect(() => {
-    photos.forEach(photo => {
-      if (!cardRefs.current[photo.id]) {
-        cardRefs.current[photo.id] = createRef()
-      }
-    })
-  }, [photos])
+  const getCardRef = (photoId) => {
+    if (!cardRefs.current[photoId]) {
+      cardRefs.current[photoId] = createRef()
+    }
+    return cardRefs.current[photoId]
+  }
 
   useImperativeHandle(ref, () => ({
-    scrollToPhoto: (photoId) => {
+    scrollToPhoto: async (photoId) => {
+      // Blur active element immediately to release horizontal scroll-snapping focus locks
+      if (document.activeElement) {
+        document.activeElement.blur()
+      }
+
+      let targetPage = 1
+      try {
+        const res = await fetch(`${BASE_URL}/files/?limit=10000`)
+        if (res.ok) {
+          const data = await res.json()
+          const items = data.items || []
+          const index = items.findIndex(item => item.id === photoId)
+          if (index !== -1) {
+            targetPage = Math.floor(index / 52) + 1
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve photo page:', err)
+      }
+
       setFilterCategory('')
       setSearchTerm('')
       setFilterPerson('')
       setFilterAlbum('')
-      setCurrentPage(1)
+      setCurrentPage(targetPage)
 
-      setTimeout(() => {
+      const tryScroll = (attempts = 0) => {
         const cardRef = cardRefs.current[photoId]
         if (cardRef?.current) {
-          cardRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          const rect = cardRef.current.getBoundingClientRect()
+          // Wait if card hasn't been laid out by the browser yet
+          if (rect.height === 0) {
+            if (attempts < 30) {
+              setTimeout(() => tryScroll(attempts + 1), 100)
+            }
+            return
+          }
+
+          // Blur active element to release any horizontal scroll-snapping focus locks
+          if (document.activeElement) {
+            document.activeElement.blur()
+          }
+
+          // Activate browser scroll engine if never scrolled before
+          const currentScroll = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+          if (currentScroll === 0) {
+            window.scrollTo(0, 1)
+            try { document.documentElement.scrollTo(0, 1) } catch { }
+          }
+
+          const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+          const targetY = rect.top + scrollTop - (window.innerHeight / 2) + (rect.height / 2)
+
+          window.scrollTo({ top: targetY, behavior: 'smooth' })
+          try {
+            document.documentElement.scrollTo({ top: targetY, behavior: 'smooth' })
+          } catch { }
+
           cardRef.current.classList.add('photo-card--highlight')
-          setTimeout(() => cardRef.current?.classList.remove('photo-card--highlight'), 1800)
-          setTimeout(() => cardRef.current?.click(), 400)
+          setTimeout(() => cardRef.current?.classList.remove('photo-card--highlight'), 1500)
+        } else if (attempts < 30) {
+          setTimeout(() => tryScroll(attempts + 1), 100)
         }
-      }, 100)
+      }
+      setTimeout(() => tryScroll(), 300)
+    },
+    filterByPersonAndScroll: async (personId, photoId) => {
+      // Blur active element immediately to release horizontal scroll-snapping focus locks
+      if (document.activeElement) {
+        document.activeElement.blur()
+      }
+
+      let targetPage = 1
+      try {
+        // Fetch all photos of this person to determine the correct page index of the clicked photo
+        const res = await fetch(`${BASE_URL}/files/?person_id=${personId}&limit=10000`)
+        if (res.ok) {
+          const data = await res.json()
+          const items = data.items || []
+          const index = items.findIndex(item => item.id === photoId)
+          if (index !== -1) {
+            targetPage = Math.floor(index / 52) + 1
+          }
+        }
+      } catch (err) {
+        console.error('Failed to resolve photo page:', err)
+      }
+
+      setFilterCategory('')
+      setSearchTerm('')
+      setFilterAlbum('')
+      setFilterPerson(String(personId))
+      setCurrentPage(targetPage)
+
+      // Immediately scroll down to the gallery container to show user feedback and release scroll locks
+      setTimeout(() => {
+        const galleryEl = document.querySelector('.gallery-container')
+        if (galleryEl) {
+          const rect = galleryEl.getBoundingClientRect()
+          const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+          const targetY = rect.top + scrollTop - 130
+          window.scrollTo({ top: targetY, behavior: 'smooth' })
+          try {
+            document.documentElement.scrollTo({ top: targetY, behavior: 'smooth' })
+          } catch { }
+        }
+      }, 50)
+
+      // Wait for the filtered data to load, then scroll to the photo
+      const tryScroll = (attempts = 0) => {
+        const cardRef = cardRefs.current[photoId]
+        if (cardRef?.current) {
+          const rect = cardRef.current.getBoundingClientRect()
+          // Wait if card hasn't been laid out by the browser yet
+          if (rect.height === 0) {
+            if (attempts < 30) {
+              setTimeout(() => tryScroll(attempts + 1), 100)
+            }
+            return
+          }
+
+          // Blur active element again just in case focus was reclaimed
+          if (document.activeElement) {
+            document.activeElement.blur()
+          }
+
+          const scrollTop = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop
+          const targetY = rect.top + scrollTop - (window.innerHeight / 2) + (rect.height / 2)
+
+          window.scrollTo({ top: targetY, behavior: 'smooth' })
+          try {
+            document.documentElement.scrollTo({ top: targetY, behavior: 'smooth' })
+          } catch { }
+
+          cardRef.current.classList.add('photo-card--highlight')
+          setTimeout(() => cardRef.current?.classList.remove('photo-card--highlight'), 1500)
+        } else if (attempts < 30) {
+          setTimeout(() => tryScroll(attempts + 1), 100)
+        }
+      }
+      setTimeout(() => tryScroll(), 300)
     },
     refresh: async () => {
       await fetchPhotos()
@@ -90,7 +215,6 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm)
-      setCurrentPage(1)
     }, 500)
     return () => clearTimeout(timer)
   }, [searchTerm])
@@ -183,9 +307,9 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   }
 
   const scrollToTop = () => {
-    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
-    try { document.documentElement.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
-    try { document.body.scrollTo({ top: 0, behavior: 'smooth' }) } catch {}
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { }
+    try { document.documentElement.scrollTo({ top: 0, behavior: 'smooth' }) } catch { }
+    try { document.body.scrollTo({ top: 0, behavior: 'smooth' }) } catch { }
   }
 
   return (
@@ -217,7 +341,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
             type="text"
             placeholder="Search albums or descriptions..."
             value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
+            onChange={e => { setCurrentPage(1); setSearchTerm(e.target.value) }}
             className="search-input"
           />
         </div>
@@ -234,10 +358,27 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
         <button className="refresh-btn" onClick={() => { fetchPhotos(false); onRefresh?.() }}>Refresh</button>
       </div>
 
-      {loading ? (
-        <div className="loading">Loading photos...</div>
-      ) : (
-        <>
+      <div className="gallery-content-wrapper" style={{ position: 'relative', minHeight: '300px' }}>
+        {loading && (
+          <div className="loading" style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'rgba(7, 7, 15, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+            backdropFilter: 'blur(6px)',
+            borderRadius: 'var(--radius-xl)',
+            fontSize: '1rem',
+            color: 'var(--accent)',
+            fontWeight: 500,
+            letterSpacing: '0.05em'
+          }}>
+            Loading photos...
+          </div>
+        )}
+        <div style={{ opacity: loading ? 0.35 : 1, transition: 'opacity 0.25s ease' }}>
           <div
             className="photo-count"
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}
@@ -282,7 +423,7 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
                 <PhotoCard
                   key={photo.id}
                   photo={photo}
-                  cardRef={cardRefs.current[photo.id]}
+                  cardRef={getCardRef(photo.id)}
                   onPhotoUpdated={handlePhotoUpdated}
                   onRefresh={handleSilentRefresh}
                 />
@@ -325,8 +466,8 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
               </div>
             </div>
           )}
-        </>
-      )}
+        </div>
+      </div>
 
       {/* Scroll-to-top: always in DOM so CSS transition works; positioned fixed bottom-right */}
       <button

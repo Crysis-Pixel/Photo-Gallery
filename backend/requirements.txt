@@ -1,11 +1,12 @@
 fastapi==0.104.1
 uvicorn==0.24.0
 sqlalchemy==2.0.23
-torch==2.1.2
-torchvision==0.16.2
+--extra-index-url https://download.pytorch.org/whl/cu121
+torch==2.1.2+cu121
+torchvision==0.16.2+cu121
 numpy<2
 protobuf<4
-onnxruntime
+onnxruntime-gpu==1.18.1
 pillow==10.1.0
 APScheduler==3.11.2
 transformers==4.35.2

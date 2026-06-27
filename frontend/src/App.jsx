@@ -116,6 +116,10 @@ function App() {
     photoGalleryRef.current?.scrollToPhoto(photoId)
   }
 
+  const filterByPersonAndScroll = (personId, photoId) => {
+    photoGalleryRef.current?.filterByPersonAndScroll(personId, photoId)
+  }
+
   if (backendFailed) {
     return (
       <div className="startup-screen">
@@ -177,6 +181,7 @@ function App() {
           <PersonManager
             onPersonsChange={setPersons}
             onPhotoClick={scrollToPhoto}
+            onPersonPhotoClick={filterByPersonAndScroll}
             refreshKey={refreshKey}
           />
           <PhotoGallery

@@ -59,3 +59,6 @@ thumbnails
 /target/
 /gen/schemas
 frontend/src-tauri/binaries/photo-gallery-backend-x86_64-pc-windows-msvc.exe
+frontend/src-tauri/binaries/photo-gallery-backend.exe
+/backend/venv_cpu
+/backend/venv_gpu

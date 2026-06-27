@@ -1,0 +1,9 @@
+{
+  "name": "photo-gallery-root",
+  "private": true,
+  "scripts": {
+    "dev": "npx concurrently -k -n \"frontend,backend\" -c \"cyan,green\" \"npm run dev --prefix frontend\" \"cd backend && venv\\Scripts\\python.exe -m app.main\"",
+    "dev:tauri": "npx concurrently -k -n \"frontend,backend\" -c \"cyan,green\" \"npm run tauri dev --prefix frontend\" \"cd backend && venv\\Scripts\\python.exe -m app.main\"",
+    "build-installer": "powershell -ExecutionPolicy Bypass -File ./build-installer.ps1"
+  }
+}

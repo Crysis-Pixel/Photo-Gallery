@@ -32,9 +32,26 @@ from PyInstaller.utils.hooks import collect_all
 EXCLUDE_DATA_EXTS = {".onnx", ".bin", ".safetensors", ".pt", ".pth", ".pb"}
 KEEP_PATH_FRAGMENTS = []
 
+# CUDA runtime DLLs bundled by torch/onnxruntime-gpu — strip so the one-file
+# exe stays under NSIS's ~2 GB limit. The build venv must use CPU-only PyTorch
+# (torch+cpu); bundling CUDA PyTorch without these DLLs crashes at import.
+# InsightFace can still use GPU via onnxruntime when CUDA is on the host.
+STRIP_BIN_FRAGMENTS = (
+    "cublas", "cudnn", "cufft", "curand", "cusolver", "cusparse",
+    "cudart", "c10_cuda", "torch_cuda", "nvrtc", "nvjitlink",
+    "caffe2_nvrtc", "zlibwapi", "nvfuser",
+)
+
+
 def filter_binaries(raw_binaries):
-    # No longer needed, as we installed CPU-only PyTorch
-    return [item for item in raw_binaries]
+    filtered = []
+    for item in raw_binaries:
+        src = item[0] if isinstance(item, (tuple, list)) else item
+        name = os.path.basename(str(src)).lower()
+        if any(frag in name for frag in STRIP_BIN_FRAGMENTS):
+            continue
+        filtered.append(item)
+    return filtered
 
 
 def filter_datas(raw_datas):

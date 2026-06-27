@@ -50,7 +50,12 @@ def _download_insightface() -> bool:
     try:
         _log.info("Checking InsightFace buffalo_l…")
         from insightface.app import FaceAnalysis
-        app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+        # InsightFace does NOT read INSIGHTFACE_HOME — pass root= explicitly
+        root = os.environ.get("INSIGHTFACE_HOME") or os.path.join(
+            os.environ.get("USERPROFILE") or os.path.expanduser("~"),
+            ".insightface",
+        )
+        app = FaceAnalysis(name="buffalo_l", root=root, providers=["CPUExecutionProvider"])
         app.prepare(ctx_id=-1, det_size=(160, 160))  # small size = fast init
         _log.info("InsightFace buffalo_l ✓")
         return True

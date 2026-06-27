@@ -215,12 +215,43 @@
 
 /* ── Highlight when scrolled-to ── */
 @keyframes cardHighlight {
-  0%   { box-shadow: 0 0 0 3px rgba(232, 213, 176, 0.6); }
-  100% { box-shadow: none; }
+  0% {
+    transform: scale(1.04) translateY(-8px);
+    box-shadow: 0 0 0 3px var(--accent), 0 24px 50px rgba(232, 213, 176, 0.25);
+    border-color: var(--accent);
+  }
+  40% {
+    transform: scale(1.04) translateY(-8px);
+    box-shadow: 0 0 0 3px var(--accent), 0 24px 50px rgba(232, 213, 176, 0.25);
+    border-color: var(--accent);
+  }
+  100% {
+    transform: scale(1) translateY(0);
+    box-shadow: none;
+    border-color: var(--card-border);
+  }
 }
 
 .photo-card--highlight {
-  animation: cardHighlight 1.6s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation: cardHighlight 1.5s cubic-bezier(0.16, 1, 0.3, 1) forwards !important;
+  z-index: 15 !important;
+  position: relative !important;
+}
+
+/* Blur, dim, and desaturate other cards in the grid when one is highlighted */
+.gallery-grid {
+  /* Ensure children can stack and position relative to each other */
+  position: relative;
+}
+
+.gallery-grid .photo-card {
+  transition: border-color 0.35s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.35s ease, filter 0.6s ease, opacity 0.6s ease;
+}
+
+.gallery-grid:has(.photo-card--highlight) .photo-card:not(.photo-card--highlight) {
+  filter: blur(6px) saturate(0.5) brightness(0.45);
+  opacity: 0.35;
+  pointer-events: none; /* Prevent clicks on blurred cards while highlight is active */
 }
 
 /* ── Responsive ── */

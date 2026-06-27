@@ -20,6 +20,22 @@ logging.basicConfig(
 )
 _log = logging.getLogger("ai_models")
 
+# ── Expose PyTorch-bundled CUDA/cuDNN DLLs to onnxruntime ────────────────────
+# onnxruntime-gpu loads onnxruntime_providers_cuda.dll which depends on
+# cudart64_12.dll, cublas64_12.dll, cudnn64_8.dll etc.  PyTorch bundles
+# all of these in its own `lib` folder.  On Python 3.8+ Windows the DLL
+# search path for extension modules must be set via os.add_dll_directory();
+# modifying os.environ['PATH'] alone has no effect on C extension DLLs.
+try:
+    import torch as _torch_init
+    _torch_lib = os.path.join(os.path.dirname(_torch_init.__file__), "lib")
+    if os.path.isdir(_torch_lib):
+        os.add_dll_directory(_torch_lib)          # Python 3.8+ Windows
+        os.environ["PATH"] = _torch_lib + os.pathsep + os.environ.get("PATH", "")
+        _log.info("Registered torch lib for DLL search: %s", _torch_lib)
+except Exception:
+    pass  # torch not installed or non-Windows — CPU-only fallback is fine
+
 # ── Feature flags (updated to True on successful load) ───────────────────────
 
 INSIGHTFACE_AVAILABLE: bool = False
@@ -42,6 +58,19 @@ _resnet = None                 # FaceNet InceptionResnetV1
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _insightface_root() -> str:
+    """Return the InsightFace root directory.
+
+    Reads INSIGHTFACE_HOME (set by runtime_env.configure()) so that both
+    the dev venv and the frozen PyInstaller exe resolve the same path.
+    InsightFace does NOT honour this env-var itself — it only accepts a
+    `root=` constructor argument, so we must bridge the two.
+    """
+    return os.environ.get("INSIGHTFACE_HOME") or os.path.join(
+        os.environ.get("USERPROFILE") or os.path.expanduser("~"),
+        ".insightface",
+    )
 
 def _get_device() -> str:
     """Return 'cuda' if a GPU is available, otherwise 'cpu'."""
@@ -71,17 +100,41 @@ def get_insightface():
         import torch
         from insightface.app import FaceAnalysis
 
-        providers = ["CPUExecutionProvider"]
-        if torch.cuda.is_available():
-            providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        cuda_ok = torch.cuda.is_available()
 
-        _face_analyzer = FaceAnalysis(name="buffalo_l", providers=providers)
-        _face_analyzer.prepare(
-            ctx_id=0 if torch.cuda.is_available() else -1,
-            det_size=(640, 640),
-        )
+        if cuda_ok:
+            _log.info("Attempting InsightFace with CUDAExecutionProvider…")
+            try:
+                _face_analyzer = FaceAnalysis(
+                    name="buffalo_l",
+                    root=_insightface_root(),
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                )
+                _face_analyzer.prepare(ctx_id=0, det_size=(640, 640))
+                _log.info("InsightFace loaded on CUDA.")
+            except Exception as cuda_err:
+                _log.warning(
+                    "CUDAExecutionProvider failed (%s) – falling back to CPU.",
+                    cuda_err,
+                )
+                _face_analyzer = FaceAnalysis(
+                    name="buffalo_l",
+                    root=_insightface_root(),
+                    providers=["CPUExecutionProvider"],
+                )
+                _face_analyzer.prepare(ctx_id=-1, det_size=(640, 640))
+                _log.info("InsightFace loaded on CPU (CUDA fallback).")
+        else:
+            _face_analyzer = FaceAnalysis(
+                name="buffalo_l",
+                root=_insightface_root(),
+                providers=["CPUExecutionProvider"],
+            )
+            _face_analyzer.prepare(ctx_id=-1, det_size=(640, 640))
+            _log.info("InsightFace loaded on CPU.")
+
         INSIGHTFACE_AVAILABLE = True
-        _log.info("InsightFace loaded successfully.")
+        _log.info("InsightFace ready.")
     except Exception as e:
         _log.error("InsightFace failed to load: %s", e)
         _face_analyzer = None
