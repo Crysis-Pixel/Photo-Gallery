@@ -1,0 +1,332 @@
+/* ========================================================
+   MemoriesSection — Memories + People tabbed section
+   Matches the existing dark / glassmorphism aesthetic.
+   ======================================================== */
+
+/* ── Root wrapper ─────────────────────────────────────── */
+.ms-root {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+/* ── Tab Bar ──────────────────────────────────────────── */
+.ms-tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  position: relative;
+}
+
+.ms-tab {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.65rem 1.1rem;
+  background: none;
+  border: none;
+  border-bottom: 2.5px solid transparent;
+  color: var(--text-secondary, #a0a0b0);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  position: relative;
+  bottom: -1px; /* sit on the border-bottom of tab-bar */
+}
+
+.ms-tab:hover {
+  color: var(--text-primary, #e8e8f0);
+}
+
+.ms-tab--active {
+  color: var(--accent, #c084fc);
+  border-bottom-color: var(--accent, #c084fc);
+}
+
+.ms-tab-icon {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* ── Tab Actions (Refresh / Clear) ───────────────────── */
+.ms-tab-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.ms-generate-btn,
+.ms-clear-btn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-secondary, #a0a0b0);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+
+.ms-generate-btn:hover:not(:disabled),
+.ms-clear-btn:hover {
+  background: rgba(192, 132, 252, 0.12);
+  border-color: rgba(192, 132, 252, 0.35);
+  color: var(--accent, #c084fc);
+}
+
+.ms-generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ms-clear-btn {
+  color: rgba(248, 113, 113, 0.85);
+  border-color: rgba(248, 113, 113, 0.2);
+}
+
+.ms-clear-btn:hover {
+  background: rgba(248, 113, 113, 0.1) !important;
+  border-color: rgba(248, 113, 113, 0.4) !important;
+  color: #f87171 !important;
+}
+
+/* ── Memories Panel ───────────────────────────────────── */
+.ms-memories-panel {
+  padding: 0.75rem 0;
+  min-height: 160px;
+}
+
+/* ── Loading / Empty States ───────────────────────────── */
+.ms-loading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem 1.5rem;
+  color: var(--text-secondary, #a0a0b0);
+  font-size: 0.85rem;
+}
+
+.ms-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(192, 132, 252, 0.2);
+  border-top-color: var(--accent, #c084fc);
+  border-radius: 50%;
+  animation: ms-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes ms-spin {
+  to { transform: rotate(360deg); }
+}
+
+.ms-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1.5rem;
+  text-align: center;
+  gap: 0.4rem;
+  color: var(--text-secondary, #a0a0b0);
+}
+
+.ms-empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.25rem;
+  opacity: 0.6;
+}
+
+.ms-empty p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.ms-empty-sub {
+  font-size: 0.78rem !important;
+  opacity: 0.65;
+  max-width: 280px;
+  line-height: 1.5;
+}
+
+/* ── Memory Card Grid (horizontal scroll) ─────────────── */
+.ms-memory-grid {
+  display: flex;
+  gap: 0.875rem;
+  padding: 0.25rem 1.25rem 0.5rem;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-width: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ms-memory-grid:active {
+  cursor: grabbing;
+}
+
+.ms-memory-grid::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Individual Memory Card ───────────────────────────── */
+.ms-memory-card {
+  flex: 0 0 380px;
+  height: 260px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+  position: relative;
+  -webkit-user-drag: none;
+}
+
+.ms-memory-card:hover {
+  transform: translateY(-3px) scale(1.02);
+  border-color: rgba(192, 132, 252, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(192, 132, 252, 0.15);
+}
+
+.ms-memory-card--active {
+  border-color: var(--accent, #c084fc) !important;
+  box-shadow: 0 0 0 2px rgba(192, 132, 252, 0.25), 0 8px 24px rgba(0, 0, 0, 0.35) !important;
+  transform: translateY(-2px) scale(1.01);
+}
+
+/* ── Card Thumbnail ───────────────────────────────────── */
+.ms-memory-thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+  flex-shrink: 0;
+}
+
+.ms-memory-thumb-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+  transition: opacity 1.2s ease-in-out, transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ms-memory-card:hover .ms-memory-thumb-img {
+  transform: scale(1.05);
+}
+
+.ms-memory-thumb-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  opacity: 0.4;
+}
+
+/* Gradient overlay over thumbnail */
+.ms-memory-gradient {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    transparent 40%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+  pointer-events: none;
+}
+
+/* Badge in top-right corner */
+.ms-memory-meta {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+
+.ms-memory-type-badge {
+  font-size: 0.7rem;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-radius: 6px;
+  padding: 2px 5px;
+  line-height: 1.4;
+}
+
+/* ── Card Text Info ───────────────────────────────────── */
+.ms-memory-info {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(to top, rgba(5, 5, 12, 0.95) 40%, transparent);
+  padding: 3rem 1.25rem 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  z-index: 5;
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.ms-memory-card:hover .ms-memory-info {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.ms-memory-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.ms-memory-subtitle {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}
+
+.ms-memory-count {
+  font-size: 0.75rem;
+  color: var(--accent, #c084fc);
+  opacity: 0.9;
+  line-height: 1.3;
+  margin-top: 0.15rem;
+  font-weight: 500;
+}
+
+/* ── Active filter label ──────────────────────────────── */
+.ms-active-label {
+  padding: 0.4rem 1.35rem 0;
+  font-size: 0.75rem;
+  color: var(--text-secondary, #a0a0b0);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ms-active-label strong {
+  color: var(--accent, #c084fc);
+  font-weight: 600;
+}

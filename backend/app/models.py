@@ -3,6 +3,7 @@ import sqlalchemy
 from sqlalchemy.orm import relationship
 from app.database import Base
 from datetime import datetime
+from typing import Optional
 
 
 class File(Base):
@@ -16,6 +17,19 @@ class File(Base):
     person_name = Column(String, nullable=True)
     face_scanned = Column(Boolean, default=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Live Photos
+    live_video_id = Column(Integer, ForeignKey("files.id"), nullable=True)
+    is_hidden = Column(Boolean, default=False, index=True)
+
+    # EXIF metadata
+    date_taken = Column(DateTime, nullable=True, index=True)
+    gps_latitude = Column(Float, nullable=True)
+    gps_longitude = Column(Float, nullable=True)
+    gps_altitude = Column(Float, nullable=True)
+    camera_make = Column(String, nullable=True)
+    camera_model = Column(String, nullable=True)
+    location_name = Column(String, nullable=True, index=True)
 
     faces = relationship("Face", back_populates="file", cascade="all, delete-orphan")
 
@@ -146,3 +160,26 @@ class FolderConfig(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     path = Column(String, unique=True, index=True)
+
+
+class Memory(Base):
+    """Auto-generated memory grouping based on location, time, and album."""
+    __tablename__ = "memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    subtitle = Column(String, nullable=True)       # e.g. "Jun 18–22, 2024"
+    memory_type = Column(String, index=True)       # "location", "album", "time"
+    location_name = Column(String, nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    start_date = Column(DateTime, nullable=True)
+    end_date = Column(DateTime, nullable=True)
+    album_name = Column(String, nullable=True)
+    cover_file_id = Column(Integer, ForeignKey("files.id"), nullable=True)
+    preview_ids = Column(String, nullable=True)  # Comma-separated list of file IDs
+    photo_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    cover_file = relationship("File", foreign_keys=[cover_file_id],
+                              primaryjoin="Memory.cover_file_id == File.id")

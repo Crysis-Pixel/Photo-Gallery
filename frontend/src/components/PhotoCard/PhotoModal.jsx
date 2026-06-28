@@ -13,6 +13,7 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
   const [imgAspectRatio, setImgAspectRatio] = useState('auto')
   const [needsRefresh, setNeedsRefresh] = useState(false)
   const [faceOverlayVersion, setFaceOverlayVersion] = useState(0)
+  const [isLivePlaying, setIsLivePlaying] = useState(false)
   
   const dialogRef = useRef(null)
   const modalVideoRef = useRef(null)
@@ -246,7 +247,56 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
     }
     if (isImageFile()) {
       return (
-        <div className="modal-image-wrapper" style={{ aspectRatio: imgAspectRatio }}>
+        <div 
+          className="modal-image-wrapper" 
+          style={{ aspectRatio: imgAspectRatio, position: 'relative' }}
+          onPointerDown={() => photo.live_video_id && setIsLivePlaying(true)}
+          onPointerUp={() => setIsLivePlaying(false)}
+          onPointerLeave={() => setIsLivePlaying(false)}
+          onPointerCancel={() => setIsLivePlaying(false)}
+        >
+          {/* Live Photo Badge */}
+          {photo.live_video_id && (
+            <div className="live-photo-badge" style={{
+              position: 'absolute',
+              top: '16px',
+              left: '16px',
+              background: 'rgba(0,0,0,0.5)',
+              backdropFilter: 'blur(4px)',
+              color: 'white',
+              borderRadius: '16px',
+              padding: '6px 10px',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              zIndex: 10,
+              pointerEvents: 'none',
+              opacity: isLivePlaying ? 0 : 1,
+              transition: 'opacity 0.2s'
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"></circle>
+                <circle cx="12" cy="12" r="8"></circle>
+              </svg>
+              LIVE
+            </div>
+          )}
+
+          {/* Actual Video for Live Photo */}
+          {photo.live_video_id && isLivePlaying && (
+            <video 
+              src={`${API}/${photo.live_video_id}/content`} 
+              className="modal-image" 
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'contain', zIndex: 5 }}
+              autoPlay 
+              playsInline 
+              muted
+              loop
+            />
+          )}
+
           <img
             src={getImageUrl()}
             alt={getFileName()}
@@ -255,6 +305,7 @@ export default function PhotoModal({ photo: initialPhoto, isOpen, onClose, onPho
               if (naturalWidth && naturalHeight) setImgAspectRatio(`${naturalWidth} / ${naturalHeight}`);
             }}
             className="modal-image"
+            style={{ opacity: isLivePlaying ? 0 : 1 }}
           />
            {photo.faces?.map(face => (
             face.box_left != null && (

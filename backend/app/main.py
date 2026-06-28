@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from app.database import Base, engine, SessionLocal
 from app.routers import files, models
+from app.routers import memories as memories_router
 from app import crud
 from apscheduler.schedulers.background import BackgroundScheduler
 import os
@@ -79,12 +80,60 @@ async def lifespan(app: FastAPI):
         if "face_scanned" not in existing_columns:
             with engine.begin() as conn:
                 conn.execute(text("ALTER TABLE files ADD COLUMN face_scanned BOOLEAN DEFAULT FALSE"))
+        # EXIF metadata columns (use PostgreSQL-compatible types)
+        exif_columns = {
+            "date_taken": "TIMESTAMP",
+            "gps_latitude": "DOUBLE PRECISION",
+            "gps_longitude": "DOUBLE PRECISION",
+            "gps_altitude": "DOUBLE PRECISION",
+            "camera_make": "VARCHAR",
+            "camera_model": "VARCHAR",
+            "location_name": "VARCHAR",
+        }
+        for col_name, col_type in exif_columns.items():
+            if col_name not in existing_columns:
+                with engine.begin() as conn:
+                    conn.execute(text(f"ALTER TABLE files ADD COLUMN {col_name} {col_type}"))
+
+        if "live_video_id" not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE files ADD COLUMN live_video_id INTEGER"))
+        if "is_hidden" not in existing_columns:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE files ADD COLUMN is_hidden BOOLEAN DEFAULT FALSE"))
+
+    if "memories" in inspector.get_table_names():
+        existing_cols = {col["name"] for col in inspector.get_columns("memories")}
+        if "preview_ids" not in existing_cols:
+            with engine.begin() as conn:
+                conn.execute(text("ALTER TABLE memories ADD COLUMN preview_ids VARCHAR"))
 
 
 
     # Run periodic scan less frequently to avoid overloading the system
     scheduler.add_job(scan_folder_task, "interval", minutes=30)
     scheduler.start()
+
+    # Generate memories on startup (in background) if none exist
+    def _startup_memory_generation():
+        from app.database import SessionLocal as _SL
+        from app.models import Memory as _M
+        from app.services.memory_service import generate_memories as _gen
+        bg_db = _SL()
+        try:
+            count = bg_db.query(_M).count()
+            if count == 0:
+                print("[memories] No memories found — generating on startup...")
+                result = _gen(bg_db)
+                print(f"[memories] Startup generation: {result}")
+        except Exception as e:
+            print(f"[memories] Startup generation error: {e}")
+        finally:
+            bg_db.close()
+
+    import threading
+    _t = threading.Thread(target=_startup_memory_generation, daemon=True)
+    _t.start()
 
     yield
 
@@ -118,6 +167,7 @@ async def add_no_cache_header(request: Request, call_next):
 
 app.include_router(files.router)
 app.include_router(models.router)
+app.include_router(memories_router.router)
 
 
 @app.get("/")

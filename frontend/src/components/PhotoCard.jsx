@@ -141,13 +141,39 @@ function PhotoCard({ photo: photoProp, onPhotoUpdated, cardRef, onRefresh }) {
               )}
             </div>
           ) : (
-            <img
-              src={getThumbnailUrl()}
-              alt={getFileName()}
-              loading="lazy"
-              className="photo-image"
-              onError={() => setImageError(true)}
-            />
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+              <img
+                src={getThumbnailUrl()}
+                alt={getFileName()}
+                loading="lazy"
+                className="photo-image"
+                onError={() => setImageError(true)}
+              />
+              {photo.live_video_id && (
+                <div className="live-photo-badge" style={{
+                  position: 'absolute',
+                  top: '8px',
+                  right: '8px',
+                  background: 'rgba(0,0,0,0.5)',
+                  backdropFilter: 'blur(4px)',
+                  color: 'white',
+                  borderRadius: '12px',
+                  padding: '2px 6px',
+                  fontSize: '0.65rem',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  pointerEvents: 'none'
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <circle cx="12" cy="12" r="8"></circle>
+                  </svg>
+                  LIVE
+                </div>
+              )}
+            </div>
           )}
         </div>
         <div className="photo-info">

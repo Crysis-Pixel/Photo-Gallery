@@ -43,7 +43,7 @@ def get_files_paginated(
     album: str = None,
     search: str = None
 ):
-    query = db.query(File)
+    query = db.query(File).filter(File.is_hidden.is_(False))
     
     if category:
         query = query.filter(File.category.ilike(category))

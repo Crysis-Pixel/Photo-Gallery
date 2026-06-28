@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import './App.css'
 import PhotoGallery from './components/PhotoGallery'
-import PersonManager from './components/PersonManager'
+import MemoriesSection from './components/MemoriesSection'
 import Sidebar from './components/Sidebar'
 import { BASE_URL } from './api'
 
@@ -39,6 +39,7 @@ function App() {
   const [persons, setPersons] = useState([])
   const [refreshKey, setRefreshKey] = useState(0)
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [activeMemory, setActiveMemory] = useState(null)
   const photoGalleryRef = useRef(null)
 
   const [backendReady, setBackendReady] = useState(false)
@@ -46,6 +47,8 @@ function App() {
   const [modelsLoading, setModelsLoading] = useState(false)
   const [startupDots, setStartupDots] = useState('.')
   const [isScanning, setIsScanning] = useState(false)
+
+  const [scanProgress, setScanProgress] = useState(0)
 
   // Stable refresh function — incrementing refreshKey causes both
   // PersonManager and PhotoGallery to re-fetch their data.
@@ -84,6 +87,7 @@ function App() {
         if (res.ok) {
           const data = await res.json()
           setIsScanning(data.scan_active)
+          setScanProgress(data.percentage || 0)
         }
       } catch (err) {
         console.error('Failed to fetch scan status:', err)
@@ -117,7 +121,12 @@ function App() {
   }
 
   const filterByPersonAndScroll = (personId, photoId) => {
+    setActiveMemory(null)  // clear memory filter when navigating to a person photo
     photoGalleryRef.current?.filterByPersonAndScroll(personId, photoId)
+  }
+
+  const handleMemorySelect = (memory) => {
+    setActiveMemory(memory)
   }
 
   if (backendFailed) {
@@ -169,26 +178,40 @@ function App() {
             ☰
           </button>
           <h1>Photo Gallery</h1>
-          {isScanning && (
-            <div className="scanning-badge">
-              <span className="scanning-dot" />
-              <span>AI Scanning Images...</span>
-            </div>
-          )}
+          <div className="header-actions">
+            {isScanning && (
+              <div className="scanning-badge progress-badge">
+                <svg viewBox="0 0 36 36" className="circular-chart">
+                  <path className="circle-bg"
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <path className="circle"
+                    strokeDasharray={`${scanProgress}, 100`}
+                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                  />
+                  <text x="18" y="20.8" className="percentage">{scanProgress}%</text>
+                </svg>
+                <span>AI Scanning Images...</span>
+              </div>
+            )}
+          </div>
         </header>
 
         <main>
-          <PersonManager
+          <MemoriesSection
             onPersonsChange={setPersons}
             onPhotoClick={scrollToPhoto}
             onPersonPhotoClick={filterByPersonAndScroll}
             refreshKey={refreshKey}
+            onMemorySelect={handleMemorySelect}
           />
           <PhotoGallery
             persons={persons}
             ref={photoGalleryRef}
             refreshKey={refreshKey}
             onRefresh={refreshAll}
+            activeMemory={activeMemory}
+            onMemorySelect={handleMemorySelect}
           />
         </main>
       </div>
@@ -197,6 +220,11 @@ function App() {
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         onRefresh={refreshAll}
+        onScanStart={() => {
+          setIsScanning(true)
+          setScanProgress(0)
+        }}
+        isScanning={isScanning}
       />
     </>
   )

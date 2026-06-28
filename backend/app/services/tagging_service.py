@@ -18,6 +18,8 @@ import threading
 
 _scan_lock = threading.Lock()
 _active_scans = 0
+_scan_total = 0
+_scan_current = 0
 
 def increment_active_scans():
     global _active_scans
@@ -25,13 +27,21 @@ def increment_active_scans():
         _active_scans += 1
 
 def decrement_active_scans():
-    global _active_scans
+    global _active_scans, _scan_total, _scan_current
     with _scan_lock:
         _active_scans = max(0, _active_scans - 1)
+        if _active_scans == 0:
+            _scan_total = 0
+            _scan_current = 0
 
-def is_scan_active():
-    global _active_scans
-    return _active_scans > 0
+def get_scan_status_info():
+    global _active_scans, _scan_total, _scan_current
+    return {
+        "scan_active": _active_scans > 0,
+        "total": _scan_total,
+        "current": _scan_current,
+        "percentage": int((_scan_current / _scan_total) * 100) if _scan_total > 0 else 0
+    }
 
 def sanitize_description(text: str) -> str:
 
@@ -42,9 +52,16 @@ def sanitize_description(text: str) -> str:
     return text[:250]
 
 def batch_auto_tag_files(db: Session, db_files: list[File], tag_category=True, tag_scenario=True, tag_faces=True, batch_size=32):
+    global _scan_current
     if not db_files: return
     photos = [f for f in db_files if f.file_type == "photo"]
     videos = [f for f in db_files if f.file_type == "video"]
+    
+    # Pre-increment for videos since they are processed quickly upfront
+    if videos:
+        with _scan_lock:
+            _scan_current += len(videos)
+            
     for v in videos:
         if tag_category and not v.category: v.category = "video"
         v.face_scanned = True
@@ -110,7 +127,11 @@ def batch_auto_tag_files(db: Session, db_files: list[File], tag_category=True, t
                     import traceback
                     print(f"Face Error for {f.path}: {e}")
                     traceback.print_exc()
-        db.commit()
+                    
+        with _scan_lock:
+            _scan_current += len(batch)
+            
+    db.commit()
 
 def _tag_faces_insightface(db, db_file, image, np, sim_th, min_ratio, det_th, cached_persons=None):
     db.query(Face).filter(Face.file_id == db_file.id).delete()
@@ -177,37 +198,110 @@ def _tag_faces_facenet(db, db_file, image, np, sim_th):
         db.add(Face(file_id=db_file.id, person_id=matched.id, box_left=float(box[0]/w), box_top=float(box[1]/h), box_width=float((box[2]-box[0])/w), box_height=float((box[3]-box[1])/h)))
         used.append(matched.id)
 
+def _extract_and_save_exif(db: Session, f: File):
+    """Extract EXIF metadata from a file and save to DB. Skips if already populated."""
+    if f.date_taken is not None:
+        return  # Already done
+    try:
+        from app.services.exif_service import extract_exif_metadata
+        from app.services.geocoding_service import reverse_geocode
+        meta = extract_exif_metadata(f.path)
+        changed = False
+        for key in ("date_taken", "gps_latitude", "gps_longitude", "gps_altitude", "camera_make", "camera_model"):
+            val = meta.get(key)
+            if val is not None and getattr(f, key) is None:
+                setattr(f, key, val)
+                changed = True
+        if meta.get("gps_latitude") and meta.get("gps_longitude") and not f.location_name:
+            f.location_name = reverse_geocode(meta["gps_latitude"], meta["gps_longitude"])
+            changed = True
+        if changed:
+            db.add(f)
+    except Exception as e:
+        print(f"[exif] Failed for {f.path}: {e}")
+
+
 def scan_and_tag_folder_service(db: Session, folder_path: str, force: bool = False):
     increment_active_scans()
     try:
-        supported = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp", ".mp4", ".mov", ".avi", ".mkv", ".webm"}
+        supported_photos = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
+        supported_videos = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+        supported = supported_photos | supported_videos
+        
         file_paths = []
         for root, _, files in os.walk(folder_path):
             for f in files:
                 if os.path.splitext(f)[1].lower() in supported:
                     file_paths.append(os.path.join(root, f))
-        to_tag = []
+                    
+        # Group files by base name for live photo pairing
+        base_to_files = {}
         for fp in file_paths:
-            ext = os.path.splitext(fp)[1].lower()
-            ftype = "video" if ext in {".mp4", ".mov", ".avi", ".mkv", ".webm"} else "photo"
-            existing = db.query(File).filter(File.path == fp).first()
-            if existing:
-                if not force and existing.category and existing.face_scanned:
-                    generate_thumbnail(existing)
-                    continue
-                f = existing
-            else:
-                f = File(path=fp, file_type=ftype)
-                db.add(f); db.commit(); db.refresh(f)
-            if ftype == "photo":
-                to_tag.append(f)
-                if len(to_tag) >= 32:
-                    batch_auto_tag_files(db, to_tag)
-                    to_tag = []
-            else:
-                f.category = "video"; f.face_scanned = True
-                db.add(f); db.commit(); generate_thumbnail(f)
+            base, ext = os.path.splitext(fp)
+            ext = ext.lower()
+            if base not in base_to_files:
+                base_to_files[base] = {'photo': None, 'video': None}
+            if ext in supported_photos:
+                base_to_files[base]['photo'] = fp
+            elif ext in supported_videos:
+                base_to_files[base]['video'] = fp
+
+        to_tag = []
+        
+        global _scan_total, _scan_current
+        with _scan_lock:
+            _scan_total += len(base_to_files)
+            
+        for base, pair in base_to_files.items():
+            with _scan_lock:
+                _scan_current += 1
+                
+            photo_fp = pair['photo']
+            video_fp = pair['video']
+
+            video_file = None
+            if video_fp:
+                video_file = db.query(File).filter(File.path == video_fp).first()
+                if not video_file:
+                    video_file = File(path=video_fp, file_type="video")
+                    db.add(video_file); db.commit(); db.refresh(video_file)
+                
+                # If it's part of a pair, hide it from the main gallery
+                if photo_fp and not video_file.is_hidden:
+                    video_file.is_hidden = True
+                    db.add(video_file); db.commit()
+                
+                if force or not video_file.category:
+                    video_file.category = "video"; video_file.face_scanned = True
+                    db.add(video_file); db.commit(); generate_thumbnail(video_file)
+
+            if photo_fp:
+                photo_file = db.query(File).filter(File.path == photo_fp).first()
+                if not photo_file:
+                    photo_file = File(path=photo_fp, file_type="photo")
+                    db.add(photo_file); db.commit(); db.refresh(photo_file)
+                
+                # Link the video file if present
+                if video_file and photo_file.live_video_id != video_file.id:
+                    photo_file.live_video_id = video_file.id
+                    db.add(photo_file); db.commit()
+                
+                if force or not (photo_file.category and photo_file.face_scanned):
+                    _extract_and_save_exif(db, photo_file)
+                    to_tag.append(photo_file)
+                    generate_thumbnail(photo_file)
+                    
+        with _scan_lock:
+            _scan_total += len(to_tag)
+
         if to_tag: batch_auto_tag_files(db, to_tag)
+        db.commit()
+        # Regenerate memories after scan
+        try:
+            from app.services.memory_service import generate_memories
+            generate_memories(db)
+        except Exception as e:
+            print(f"[memories] Post-scan generation error: {e}")
     finally:
         decrement_active_scans()
 
@@ -235,7 +329,15 @@ def recheck_and_tag_missing_service(db: Session):
         # Find files that have face_scanned but no Face records (legacy bug fix)
         face_ids = db.query(Face.file_id).distinct().all()
         files_with_faces = {row[0] for row in face_ids}
+        
+        global _scan_total, _scan_current
+        with _scan_lock:
+            _scan_total += len(all_f)
+            
         for f in all_f:
+            with _scan_lock:
+                _scan_current += 1
+                
             if not os.path.exists(f.path):
                 # Delete thumbnail from disk
                 from app.utils import THUMB_DIR
@@ -252,7 +354,43 @@ def recheck_and_tag_missing_service(db: Session):
             if f.file_type == "photo" and (not f.category or not f.face_scanned or missing_faces) and f not in to_tag:
                 to_tag.append(f)
         db.commit()
-        if to_tag: batch_auto_tag_files(db, to_tag)
+        if to_tag:
+            with _scan_lock:
+                _scan_total += len(to_tag)
+                
+            # Extract EXIF for any newly added files before tagging
+            for f in to_tag:
+                _extract_and_save_exif(db, f)
+                with _scan_lock:
+                    _scan_current += 1
+                    
+            db.commit()
+            
+            with _scan_lock:
+                _scan_total += len(to_tag)
+                
+            batch_auto_tag_files(db, to_tag)
+        # Also extract EXIF for existing files that are missing it
+        missing_exif = db.query(File).filter(
+            File.file_type == "photo",
+            File.date_taken.is_(None)
+        ).limit(500).all()
+        
+        if missing_exif:
+            with _scan_lock:
+                _scan_total += len(missing_exif)
+                
+            for f in missing_exif:
+                _extract_and_save_exif(db, f)
+                with _scan_lock:
+                    _scan_current += 1
+        db.commit()
+        # Regenerate memories after recheck
+        try:
+            from app.services.memory_service import generate_memories
+            generate_memories(db)
+        except Exception as e:
+            print(f"[memories] Post-recheck generation error: {e}")
     finally:
         decrement_active_scans()
 

@@ -13,4 +13,5 @@ transformers==4.35.2
 openai-clip==1.0.1
 facenet-pytorch
 opencv-python
+reverse_geocoder
 

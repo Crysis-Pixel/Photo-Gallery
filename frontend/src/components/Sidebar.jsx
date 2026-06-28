@@ -10,7 +10,7 @@ const MODEL_LABELS = {
   facenet: 'Face Detection (FaceNet)',
 }
 
-const Sidebar = ({ isOpen, onClose, onRefresh }) => {
+const Sidebar = ({ isOpen, onClose, onRefresh, onScanStart, isScanning }) => {
   const isTauri = window.__TAURI_INTERNALS__ !== undefined;
   
   const handleOpenDialog = async () => {
@@ -39,13 +39,55 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
   const [mergeResult, setMergeResult] = useState(null)
   const [modelStatus, setModelStatus] = useState(null)
   const [recheckModal, setRecheckModal] = useState({ isOpen: false, title: '', message: '', type: 'info' })
+  
+  const [albums, setAlbums] = useState([])
+  const [persons, setPersons] = useState([])
+  const [selectedAlbum, setSelectedAlbum] = useState('')
+  const [selectedPerson, setSelectedPerson] = useState('')
+
+  const sortedPersons = [...persons].sort((a, b) => {
+    const aIsNamed = !!a.name;
+    const bIsNamed = !!b.name;
+    
+    // Named persons come first
+    if (aIsNamed && !bIsNamed) return -1;
+    if (!aIsNamed && bIsNamed) return 1;
+    
+    if (aIsNamed && bIsNamed) {
+      // Sort named alphabetically
+      return a.name.localeCompare(b.name);
+    } else {
+      // Sort unnamed by ID (Person 1, Person 2, etc.)
+      return a.id - b.id;
+    }
+  });
 
   useEffect(() => {
     if (isOpen) {
       fetchFolders()
       fetchModelStatus()
+      fetchAlbumsAndPersons()
     }
   }, [isOpen])
+
+  const fetchAlbumsAndPersons = async () => {
+    try {
+      const [metaRes, personsRes] = await Promise.all([
+        fetch(`${BASE_URL}/files/metadata`),
+        fetch(`${BASE_URL}/files/persons`)
+      ])
+      if (metaRes.ok) {
+        const data = await metaRes.json()
+        setAlbums(data.albums || [])
+      }
+      if (personsRes.ok) {
+        const data = await personsRes.json()
+        setPersons(data || [])
+      }
+    } catch (e) {
+      console.error('Failed to fetch filter data', e)
+    }
+  }
 
   const fetchModelStatus = async () => {
     try {
@@ -118,6 +160,44 @@ const Sidebar = ({ isOpen, onClose, onRefresh }) => {
     } catch (e) {
       console.error('Rescan failed:', e)
       setFolderError('Rescan failed')
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
+  const handleRescanAlbum = async () => {
+    if (!selectedAlbum) return
+    setScanLoading(true)
+    if (onScanStart) onScanStart()
+    try {
+      await fetch(`${BASE_URL}/files/rescan/album?album=${encodeURIComponent(selectedAlbum)}`, { method: 'POST' })
+      setRecheckModal({
+        isOpen: true,
+        title: 'Album Rescan Started',
+        message: `Started scanning all photos in album: ${selectedAlbum}.`,
+        type: 'success'
+      })
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
+  const handleRescanPerson = async () => {
+    if (!selectedPerson) return
+    setScanLoading(true)
+    if (onScanStart) onScanStart()
+    try {
+      await fetch(`${BASE_URL}/files/rescan/person?person_id=${selectedPerson}`, { method: 'POST' })
+      setRecheckModal({
+        isOpen: true,
+        title: 'Person Rescan Started',
+        message: 'Started background rescan of all photos containing this person.',
+        type: 'success'
+      })
+    } catch (e) {
+      console.error(e)
     } finally {
       setScanLoading(false)
     }
@@ -288,6 +368,46 @@ const removeFolder = async (id) => {
             >
               {checkLoading ? 'Rechecking...' : 'Check Missing Files and Details'}
             </button>
+
+              <div className="manual-rescan-section">
+                <h4 className="manual-rescan-title">Manual Rescan</h4>
+                
+                <div className="manual-rescan-row">
+                  <select 
+                    className="manual-rescan-select"
+                    value={selectedAlbum} 
+                    onChange={e => setSelectedAlbum(e.target.value)}
+                  >
+                    <option value="">Select Album</option>
+                    {albums.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                  <button 
+                    className="manual-rescan-btn"
+                    onClick={handleRescanAlbum} 
+                    disabled={!selectedAlbum || scanLoading || isScanning}
+                  >
+                    Rescan
+                  </button>
+                </div>
+
+                <div className="manual-rescan-row">
+                  <select 
+                    className="manual-rescan-select"
+                    value={selectedPerson} 
+                    onChange={e => setSelectedPerson(e.target.value)}
+                  >
+                    <option value="">Select Person</option>
+                    {sortedPersons.map(p => <option key={p.id} value={p.id}>{p.name || `Person ${p.id}`}</option>)}
+                  </select>
+                  <button 
+                    className="manual-rescan-btn"
+                    onClick={handleRescanPerson} 
+                    disabled={!selectedPerson || scanLoading || isScanning}
+                  >
+                    Rescan
+                  </button>
+                </div>
+              </div>
 
             <button
               className="merge-people-btn"

@@ -162,10 +162,88 @@ def recheck_missing(background_tasks: BackgroundTasks, db: Session = Depends(get
     }
 
 
+@router.post("/rescan/album")
+def rescan_album(background_tasks: BackgroundTasks, album: str = Query(...), db: Session = Depends(get_db)):
+    """Rescan all files within a specific album (folder)."""
+    from sqlalchemy import or_, func
+    normalized_path = func.replace(File.path, '\\', '/')
+    files = db.query(File).filter(
+        or_(
+            normalized_path.ilike(f"%/{album}/%"),
+            normalized_path.ilike(f"%/{album}")
+        )
+    ).all()
+    
+    if not files:
+        raise HTTPException(status_code=404, detail="No files found for this album")
+        
+    directories = set(os.path.dirname(f.path) for f in files if f.path)
+    
+    def run_bg_album_scan():
+        bg_db = SessionLocal()
+        try:
+            for fp in directories:
+                crud.scan_and_tag_folder(bg_db, fp, force=True)
+            crud.cleanup_orphaned_persons(bg_db)
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(run_bg_album_scan)
+    return {"message": f"Album '{album}' scan started in background", "directories": list(directories)}
+
+
+@router.post("/rescan/person")
+def rescan_person(background_tasks: BackgroundTasks, person_id: int = Query(...), db: Session = Depends(get_db)):
+    """Rescan all photos containing a specific person."""
+    files = db.query(File).join(Face).filter(Face.person_id == person_id).all()
+    
+    if not files:
+        raise HTTPException(status_code=404, detail="No files found for this person")
+        
+    file_ids = [f.id for f in files]
+    
+    # Wipe the person completely so the "mixed" embedding is destroyed.
+    # This forces the rescan to treat them as entirely new faces and 
+    # properly separate them into distinct Person entries.
+    from app.crud.person_crud import delete_person_record
+    delete_person_record(db, person_id)
+    
+    def run_bg_person_scan():
+        bg_db = SessionLocal()
+        try:
+            from app.services.tagging_service import batch_auto_tag_files, increment_active_scans, decrement_active_scans, _scan_lock
+            import app.services.tagging_service as ts
+            
+            increment_active_scans()
+            try:
+                db_files = bg_db.query(File).filter(File.id.in_(file_ids)).all()
+                with _scan_lock:
+                    ts._scan_total += len(db_files)
+                
+                # Process in small chunks to avoid memory spikes
+                chunk_size = 32
+                for i in range(0, len(db_files), chunk_size):
+                    batch_auto_tag_files(
+                        bg_db, 
+                        db_files[i:i+chunk_size], 
+                        tag_category=False, 
+                        tag_scenario=False, 
+                        tag_faces=True
+                    )
+                crud.cleanup_orphaned_persons(bg_db)
+            finally:
+                decrement_active_scans()
+        finally:
+            bg_db.close()
+
+    background_tasks.add_task(run_bg_person_scan)
+    return {"message": f"Person rescan started in background for {len(file_ids)} files"}
+
+
 @router.get("/scan-status")
 def get_scan_status():
-    from app.services.tagging_service import is_scan_active
-    return {"scan_active": is_scan_active()}
+    from app.services.tagging_service import get_scan_status_info
+    return get_scan_status_info()
 
 
 # ── Folder config endpoints ────────────────────────────────────────────────────

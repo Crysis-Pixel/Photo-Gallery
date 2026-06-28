@@ -211,37 +211,58 @@ main {
   box-shadow: 0 4px 16px var(--accent-glow, rgba(232,213,176,0.2));
 }
 
-/* ── Scanning Badge ── */
+/* ── Scanning Badge & Progress ── */
+.header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+}
+
 .scanning-badge {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  background: rgba(232, 213, 176, 0.1);
-  border: 1px solid rgba(232, 213, 176, 0.25);
+  gap: 0.6rem;
+  background: rgba(232, 213, 176, 0.08);
+  border: 1px solid rgba(232, 213, 176, 0.2);
   color: var(--accent);
   padding: 0.4rem 0.8rem;
-  border-radius: var(--radius-sm);
+  border-radius: 20px;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  margin-left: auto;
   box-shadow: 0 0 12px rgba(232, 213, 176, 0.05);
 }
 
-@keyframes pulse {
-  0% { transform: scale(0.9); opacity: 0.6; }
-  50% { transform: scale(1.15); opacity: 1; box-shadow: 0 0 8px rgba(232, 213, 176, 0.5); }
-  100% { transform: scale(0.9); opacity: 0.6; }
+.circular-chart {
+  display: block;
+  width: 28px;
+  height: 28px;
 }
 
-.scanning-dot {
-  width: 8px;
-  height: 8px;
-  background-color: var(--accent);
-  border-radius: 50%;
-  animation: pulse 1.6s infinite ease-in-out;
+.circle-bg {
+  fill: none;
+  stroke: rgba(232, 213, 176, 0.15);
+  stroke-width: 3.5;
 }
+
+.circle {
+  fill: none;
+  stroke-width: 3.5;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.5s ease-out;
+}
+
+.percentage {
+  fill: var(--accent);
+  font-family: var(--font-body);
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+}
+
+
 
 /* ── Startup Logo ── */
 .startup-logo {

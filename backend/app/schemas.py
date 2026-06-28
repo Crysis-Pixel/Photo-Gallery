@@ -60,6 +60,18 @@ class FileResponse(FileBase):
     person_names: List[str] = []
     person_colors: List[Optional[str]] = []
     faces: List[FaceResponse] = []
+    face_scanned: bool = False
+    live_video_id: Optional[int] = None
+    is_hidden: bool = False
+    
+    # EXIF metadata
+    date_taken: Optional[datetime] = None
+    gps_latitude: Optional[float] = None
+    gps_longitude: Optional[float] = None
+    gps_altitude: Optional[float] = None
+    camera_make: Optional[str] = None
+    camera_model: Optional[str] = None
+    location_name: Optional[str] = None
 
 _apply_orm_mode(FileResponse)
 
@@ -106,3 +118,22 @@ class FilterMetadataResponse(BaseModel):
     categories: List[str]
     scenarios: List[str]
     albums: List[str]
+
+
+class MemoryResponse(BaseModel):
+    id: int
+    title: str
+    subtitle: Optional[str] = None
+    memory_type: str
+    location_name: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    album_name: Optional[str] = None
+    cover_file_id: Optional[int] = None
+    preview_ids: Optional[str] = None
+    photo_count: int = 0
+    created_at: Optional[datetime] = None
+
+_apply_orm_mode(MemoryResponse)

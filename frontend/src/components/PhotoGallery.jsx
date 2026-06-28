@@ -3,7 +3,7 @@ import PhotoCard from './PhotoCard'
 import '../styles/PhotoGallery.css'
 import { BASE_URL } from '../api'
 
-const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, refreshKey, onRefresh }, ref) {
+const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, refreshKey, onRefresh, activeMemory, onMemorySelect }, ref) {
   const [photos, setPhotos] = useState([])
   const [totalPhotos, setTotalPhotos] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -13,12 +13,14 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('')
   const [filterPerson, setFilterPerson] = useState('')
   const [filterAlbum, setFilterAlbum] = useState('')
+  const [filterMemory, setFilterMemory] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [showScrollTop, setShowScrollTop] = useState(false)
 
   const [categories, setCategories] = useState([])
   const [scenarios, setScenarios] = useState([])
   const [albums, setAlbums] = useState([])
+  const [memories, setMemories] = useState([])
 
   useEffect(() => {
     // In Tauri WebView, scroll happens on document.documentElement, not window
@@ -219,9 +221,17 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
     return () => clearTimeout(timer)
   }, [searchTerm])
 
+  const prevMemoryRef = useRef(activeMemory)
+  useEffect(() => {
+    if (prevMemoryRef.current !== activeMemory) {
+      setCurrentPage(1)
+      prevMemoryRef.current = activeMemory
+    }
+  }, [activeMemory])
+
   useEffect(() => {
     fetchPhotos(false)
-  }, [currentPage, filterCategory, debouncedSearchTerm, filterPerson, filterAlbum])
+  }, [currentPage, filterCategory, debouncedSearchTerm, filterPerson, filterAlbum, activeMemory])
 
   const fetchMetadata = async () => {
     try {
@@ -232,6 +242,12 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
         setScenarios(data.scenarios || [])
         setAlbums(data.albums || [])
       }
+      
+      const memResponse = await fetch(`${BASE_URL}/memories/`)
+      if (memResponse.ok) {
+        const memData = await memResponse.json()
+        setMemories(memData || [])
+      }
     } catch (err) {
       console.error('Failed to fetch metadata:', err)
     }
@@ -240,23 +256,37 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   const fetchPhotos = async (silent = false) => {
     try {
       if (!silent) setLoading(true)
-      const params = new URLSearchParams()
-      params.append('skip', (currentPage - 1) * 52)
-      params.append('limit', 52)
-      if (filterCategory) params.append('category', filterCategory)
-      if (debouncedSearchTerm) params.append('search', debouncedSearchTerm)
-      if (filterPerson) params.append('person_id', filterPerson)
-      if (filterAlbum) params.append('album', filterAlbum)
 
-      const response = await fetch(`${BASE_URL}/files/?${params.toString()}`)
-      if (!response.ok) throw new Error('Failed to fetch photos')
+      let incoming = []
+      let newTotal = 0
 
-      const data = await response.json()
-      const incoming = data.items || []
+      if (activeMemory) {
+        // Fetch photos for the selected memory
+        const params = new URLSearchParams()
+        params.append('skip', (currentPage - 1) * 52)
+        params.append('limit', 52)
+        const response = await fetch(`${BASE_URL}/memories/${activeMemory.id}/photos?${params.toString()}`)
+        if (!response.ok) throw new Error('Failed to fetch memory photos')
+        const data = await response.json()
+        incoming = data.items || []
+        newTotal = data.total || 0
+      } else {
+        const params = new URLSearchParams()
+        params.append('skip', (currentPage - 1) * 52)
+        params.append('limit', 52)
+        if (filterCategory) params.append('category', filterCategory)
+        if (debouncedSearchTerm) params.append('search', debouncedSearchTerm)
+        if (filterPerson) params.append('person_id', filterPerson)
+        if (filterAlbum) params.append('album', filterAlbum)
+
+        const response = await fetch(`${BASE_URL}/files/?${params.toString()}`)
+        if (!response.ok) throw new Error('Failed to fetch photos')
+        const data = await response.json()
+        incoming = data.items || []
+        newTotal = data.total || 0
+      }
 
       setPhotos(prev => {
-        // For any photo that was locally updated since the last full fetch,
-        // keep our fresh copy instead of the server's potentially-stale one.
         const localMap = new Map()
         if (locallyUpdatedRef.current.size > 0) {
           prev.forEach(p => {
@@ -268,15 +298,12 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
           localMap.has(serverPhoto.id) ? localMap.get(serverPhoto.id) : serverPhoto
         )
 
-        // Clear protection only on a full (non-silent) fetch — those are
-        // triggered by real user actions like page change or filter, at which
-        // point the server data is authoritative again.
         if (!silent) locallyUpdatedRef.current.clear()
 
         return merged
       })
 
-      setTotalPhotos(data.total || 0)
+      setTotalPhotos(newTotal)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -315,47 +342,66 @@ const PhotoGallery = forwardRef(function PhotoGallery({ persons: personsProp, re
   return (
     <div className="gallery-container">
       <div className="filters">
-        <div className="filter-group">
-          <label>Category:</label>
-          <select
-            value={filterCategory}
-            onChange={e => { setCurrentPage(1); setFilterCategory(e.target.value) }}
-          >
-            <option value="">All Categories</option>
-            {categories.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-        <div className="filter-group">
-          <label>Person:</label>
-          <select
-            value={filterPerson}
-            onChange={e => { setCurrentPage(1); setFilterPerson(e.target.value) }}
-          >
-            <option value="">All Persons</option>
-            {sortedPersons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-        </div>
-        <div className="filter-group">
-          <label>Search:</label>
-          <input
-            type="text"
-            placeholder="Search albums or descriptions..."
-            value={searchTerm}
-            onChange={e => { setCurrentPage(1); setSearchTerm(e.target.value) }}
-            className="search-input"
-          />
-        </div>
-        <div className="filter-group">
-          <label>Album:</label>
-          <select
-            value={filterAlbum}
-            onChange={e => { setCurrentPage(1); setFilterAlbum(e.target.value) }}
-          >
-            <option value="">All Albums</option>
-            {albums.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
-        </div>
-        <button className="refresh-btn" onClick={() => { fetchPhotos(false); onRefresh?.() }}>Refresh</button>
+        {activeMemory ? (
+          <div className="filter-group" style={{ flexWrap: 'nowrap', alignItems: 'center', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary, #a0a0b0)' }}>Viewing memory:</span>
+            <span style={{
+              padding: '0.2rem 0.65rem',
+              borderRadius: '999px',
+              background: 'rgba(192, 132, 252, 0.15)',
+              border: '1px solid rgba(192, 132, 252, 0.35)',
+              color: 'var(--accent, #c084fc)',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+            }}>
+              {activeMemory.title}{activeMemory.subtitle ? ` · ${activeMemory.subtitle}` : ''}
+            </span>
+          </div>
+        ) : (
+          <>
+            <div className="filter-group">
+              <label>Category:</label>
+              <select
+                value={filterCategory}
+                onChange={e => { setCurrentPage(1); setFilterCategory(e.target.value) }}
+              >
+                <option value="">All Categories</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Person:</label>
+              <select
+                value={filterPerson}
+                onChange={e => { setCurrentPage(1); setFilterPerson(e.target.value) }}
+              >
+                <option value="">All Persons</option>
+                {sortedPersons.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            </div>
+            <div className="filter-group">
+              <label>Search:</label>
+              <input
+                type="text"
+                placeholder="Search albums or descriptions..."
+                value={searchTerm}
+                onChange={e => { setCurrentPage(1); setSearchTerm(e.target.value) }}
+                className="search-input"
+              />
+            </div>
+            <div className="filter-group">
+              <label>Album:</label>
+              <select
+                value={filterAlbum}
+                onChange={e => { setCurrentPage(1); setFilterAlbum(e.target.value) }}
+              >
+                <option value="">All Albums</option>
+                {albums.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <button className="refresh-btn" onClick={() => { fetchPhotos(false); onRefresh?.() }}>Refresh</button>
+          </>
+        )}
       </div>
 
       <div className="gallery-content-wrapper" style={{ position: 'relative', minHeight: '300px' }}>

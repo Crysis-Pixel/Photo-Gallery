@@ -54,6 +54,11 @@ _blip_model = None             # BLIP BlipForConditionalGeneration
 _mtcnn = None                  # FaceNet MTCNN detector
 _resnet = None                 # FaceNet InceptionResnetV1
 
+_insightface_attempted = False
+_clip_attempted = False
+_blip_attempted = False
+_facenet_attempted = False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -90,10 +95,11 @@ def get_insightface():
     Return the InsightFace FaceAnalysis instance, loading it on first call.
     Returns None if the model cannot be loaded.
     """
-    global _face_analyzer, INSIGHTFACE_AVAILABLE
+    global _face_analyzer, INSIGHTFACE_AVAILABLE, _insightface_attempted
 
-    if _face_analyzer is not None:
+    if _insightface_attempted:
         return _face_analyzer
+    _insightface_attempted = True
 
     try:
         _log.info("Loading InsightFace (buffalo_l)…")
@@ -152,10 +158,11 @@ def get_clip():
     Return (clip_model, preprocess, device) tuple, loading on first call.
     Returns (None, None, 'cpu') if the model cannot be loaded.
     """
-    global _clip_model, _clip_preprocess, _clip_device, CLIP_AVAILABLE
+    global _clip_model, _clip_preprocess, _clip_device, CLIP_AVAILABLE, _clip_attempted
 
-    if _clip_model is not None:
+    if _clip_attempted:
         return _clip_model, _clip_preprocess, _clip_device
+    _clip_attempted = True
 
     try:
         _log.info("Loading CLIP (ViT-B/32)…")
@@ -195,10 +202,11 @@ def get_blip():
     Uses local_files_only=True to prevent runtime downloads.
     Returns (None, None, 'cpu') if the model cannot be loaded.
     """
-    global _blip_processor, _blip_model, BLIP_AVAILABLE
+    global _blip_processor, _blip_model, _clip_device, BLIP_AVAILABLE, _blip_attempted
 
-    if _blip_model is not None:
-        return _blip_processor, _blip_model, _get_device()
+    if _blip_attempted:
+        return _blip_processor, _blip_model, _clip_device
+    _blip_attempted = True
 
     MODEL_ID = "Salesforce/blip-image-captioning-base"
     try:
@@ -217,6 +225,7 @@ def get_blip():
             import torch
             _blip_model = _blip_model.half()
 
+        _clip_device = device
         BLIP_AVAILABLE = True
         _log.info("BLIP loaded successfully on %s.", device)
     except Exception as e:
@@ -225,7 +234,7 @@ def get_blip():
         _blip_model = None
         BLIP_AVAILABLE = False
 
-    return _blip_processor, _blip_model, _get_device()
+    return _blip_processor, _blip_model, _clip_device
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -237,10 +246,11 @@ def get_facenet():
     Return (mtcnn, resnet, device) tuple, loading on first call.
     Returns (None, None, 'cpu') if the model cannot be loaded.
     """
-    global _mtcnn, _resnet, FACENET_AVAILABLE
+    global _mtcnn, _resnet, _clip_device, FACENET_AVAILABLE, _facenet_attempted
 
-    if _mtcnn is not None:
+    if _facenet_attempted:
         return _mtcnn, _resnet, _get_device()
+    _facenet_attempted = True
 
     try:
         _log.info("Loading FaceNet (MTCNN + InceptionResnetV1)…")
